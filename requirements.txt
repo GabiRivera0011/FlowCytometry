@@ -1,0 +1,8 @@
+streamlit
+FlowKit
+pandas
+numpy
+scikit-learn
+umap-learn
+plotly
+pytest
