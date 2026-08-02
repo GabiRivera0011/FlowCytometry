@@ -69,3 +69,7 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
 - [ ] Run locally (`streamlit run app/Home.py`) and verify with a real `.fcs` file
 - [ ] Deploy to Streamlit Community Cloud and confirm `requirements.txt` is picked up
 - [ ] Confirm session-only behavior (data clears on refresh / new session, as expected for v1)
+
+## References
+
+- [FlowRepository](http://flowrepository.org/) — public repository of flow cytometry datasets, used as the source of sample `.fcs` files for development and testing
