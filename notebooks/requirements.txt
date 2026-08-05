@@ -1,0 +1,5 @@
+# Deps for the prompt playground notebook only — not used by the Streamlit app,
+# so kept separate from the root requirements.txt.
+anthropic
+python-dotenv
+ipykernel
