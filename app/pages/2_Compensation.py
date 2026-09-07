@@ -175,3 +175,7 @@ with st.expander("Full matrix (heatmap)"):
             build_slope_heatmap(workspace.last_diagnostic.slopes, fluor_channels, "Slope diagnostic", bound),
             width="stretch",
         )
+
+st.divider()
+st.caption("Clicking Next runs the Gating — Live Cells page. Allow it a moment to pick up any changes made here.")
+st.page_link("pages/3_Gating_-_Live_Cells.py", label="Next: Gating — Live Cells →")

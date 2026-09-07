@@ -1,183 +1,127 @@
-from pathlib import Path
-
 import streamlit as st
 
 from _common import ensure_src_on_path, get_workspace
 
 ensure_src_on_path()
 
-import numpy as np
-import pandas as pd
-
-from flowcyto.io.csv_source import load_csv
-from flowcyto.io.fcs import load_fcs
-from flowcyto.io.metadata import build_channel_metadata
-from flowcyto.io.types import LoadedSample
-from flowcyto.viz.raw import build_histogram_figure, build_scatter_figure
+from flowcyto.viz.lineage import (
+    build_b_cell_diagram,
+    build_cd4_differentiation_diagram,
+    build_cd8_differentiation_diagram,
+    build_lineage_diagram,
+    build_myeloid_nk_diagram,
+    build_th_diagram,
+    build_treg_diagram,
+)
 
 st.set_page_config(page_title="FlowCytometry", layout="wide")
-st.title("FlowCytometry")
+st.title("Flow Cytometry Immune Cell Identification")
+st.caption("An automated flow cytometry analysis workflow.")
 
 workspace = get_workspace()
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-PLOT_SUBSAMPLE_SIZE = 20_000
-
-
-@st.cache_resource(scope="session", max_entries=1, show_spinner="Parsing sample file...")
-def _cached_load_sample(content_hash: str, filename: str, _file_or_path) -> LoadedSample:
-    if filename.lower().endswith(".csv"):
-        return load_csv(_file_or_path, filename)
-    return load_fcs(_file_or_path, filename)
-
-
-@st.cache_resource(scope="session", show_spinner="Parsing control file...")
-def _cached_load_control(content_hash: str, filename: str, _file_or_path) -> LoadedSample:
-    return load_fcs(_file_or_path, filename)
-
-
-@st.cache_data(show_spinner=False)
-def _cached_metadata(content_hash: str, _sample: LoadedSample) -> pd.DataFrame:
-    return build_channel_metadata(_sample)
-
-
-def _content_hash(file_or_path) -> str:
-    import hashlib
-
-    data = file_or_path.read_bytes() if isinstance(file_or_path, Path) else file_or_path.getvalue()
-    return hashlib.md5(data).hexdigest()
-
-
-# --- Upload ---
-
-st.header("1. Load data")
-sample_col, controls_col = st.columns(2)
-
-with sample_col:
-    st.subheader("Sample file")
-    sample_upload = st.file_uploader("FCS (a full acquisition, e.g. PBMC_*.fcs) or CSV", type=["fcs", "csv"])
-    bundled_samples = sorted(DATA_DIR.glob("PBMC_*.fcs")) + sorted(DATA_DIR.glob("*.csv")) if DATA_DIR.is_dir() else []
-    bundled_sample_choice = None
-    if bundled_samples and sample_upload is None:
-        bundled_sample_choice = st.selectbox(
-            "...or use a bundled sample (dev only)", ["(none)"] + [p.name for p in bundled_samples]
-        )
-        bundled_sample_choice = None if bundled_sample_choice == "(none)" else bundled_sample_choice
-
-with controls_col:
-    st.subheader("Compensation controls (optional)")
-    control_uploads = st.file_uploader(
-        "Single-stain Comp_*.fcs files", type=["fcs"], accept_multiple_files=True
-    )
-    bundled_controls = sorted(DATA_DIR.glob("Comp_*.fcs")) if DATA_DIR.is_dir() else []
-    use_bundled_controls = False
-    if bundled_controls and not control_uploads:
-        use_bundled_controls = st.checkbox(f"...or use the {len(bundled_controls)} bundled controls (dev only)")
-
-sample_source = sample_upload or (
-    next(p for p in bundled_samples if p.name == bundled_sample_choice) if bundled_sample_choice else None
+st.markdown(
+    "Load an `.fcs` or `.csv` sample, assess and adjust compensation, then gate "
+    "down to the populations you care about. Each step builds on the one "
+    "before it and lives on its own page in the sidebar."
 )
 
-if sample_source is not None:
-    filename = sample_source.name
-    content_hash = _content_hash(sample_source)
-    if workspace.sample is None or workspace.sample.content_hash != content_hash:
-        workspace.sample = _cached_load_sample(content_hash, filename, sample_source)
-        workspace.metadata = None  # force a metadata rebuild for the new sample
-        workspace.spillover_matrix = None
-        workspace.default_scenario = None
-        workspace.last_diagnostic = None
+st.divider()
 
-control_sources = list(control_uploads) if control_uploads else (bundled_controls if use_bundled_controls else [])
-control_hashes = tuple(sorted(_content_hash(c) for c in control_sources))
-if st.session_state.get("_last_control_hashes") != control_hashes:
-    st.session_state["_last_control_hashes"] = control_hashes
-    workspace.spillover_matrix = None  # controls changed — force a scenario re-comparison
-    workspace.default_scenario = None
-    workspace.last_diagnostic = None
+col1, col2, col3 = st.columns(3)
 
-if control_sources:
-    loaded_controls = []
-    for control_source in control_sources:
-        control_filename = control_source.name
-        control_hash = _content_hash(control_source)
-        loaded_controls.append(_cached_load_control(control_hash, control_filename, control_source))
-    workspace.control_samples = loaded_controls
-    workspace.controls_available = True
-else:
-    workspace.control_samples = []
-    workspace.controls_available = False
+with col1:
+    st.subheader("1. Parse and View")
+    st.write("Load a sample (and optional compensation controls), see channel metadata, and preview raw scatter/histogram views.")
+    st.page_link("pages/1_Parse_and_View.py", label="Open →")
+
+with col2:
+    st.subheader("2. Compensation")
+    st.write("Compare compensation scenarios, edit the spillover matrix directly, and inspect the most notable channel pairs.")
+    st.page_link("pages/2_Compensation.py", label="Open →")
+
+with col3:
+    st.subheader("3. Gating — Live Cells")
+    st.write("Gate down to live, single cells before further analysis. Coming soon.")
+    st.page_link("pages/3_Gating_-_Live_Cells.py", label="Open →")
+
+st.divider()
 
 if workspace.sample is None:
-    st.info("Upload (or pick a bundled) sample file to continue.")
-    st.stop()
+    st.info("No sample loaded yet. Start with **Parse and View**.")
+else:
+    sample = workspace.sample
+    status = f"**{sample.filename}** loaded: {sample.event_count:,} events, {len(sample.pnn_labels)} channels"
+    if workspace.controls_available:
+        status += f", {len(workspace.control_samples)} compensation control(s)"
+    st.success(status)
 
-sample = workspace.sample
+st.divider()
 
-# --- Metadata (automatic, minimal) ---
-
-st.header("2. Metadata")
-
-if workspace.metadata is None:
-    workspace.metadata = _cached_metadata(sample.content_hash, sample)
-metadata = workspace.metadata
-
-category_order = {"scatter": 0, "time": 1, "target-marker": 2, "empty": 3}
-display_metadata = metadata.copy()
-display_metadata["_order"] = display_metadata["category"].map(category_order)
-display_metadata = display_metadata.sort_values(["_order", "channel"]).drop(columns="_order")
-display_metadata["target"] = display_metadata["target"].fillna("—")
-display_metadata["marker"] = display_metadata["marker"].fillna("—")
-display_metadata["category"] = display_metadata["category"].str.replace("-", " ").str.title()
-
-st.dataframe(
-    display_metadata.rename(columns={"channel": "Channel", "category": "Category", "target": "Target", "marker": "Marker"}),
-    width="stretch",
-    hide_index=True,
-    column_config={
-        "Category": st.column_config.TextColumn(width="small"),
-    },
+st.subheader("Identifying immune cell subsets by gating")
+st.write(
+    "Each gate applies one marker decision that narrows live cells toward a "
+    "specific lineage. Population identity depends on the combination of "
+    "markers co-expressed by a cell and their relative intensity."
 )
-
-category_counts = metadata["category"].value_counts()
-n_scatter_time = category_counts.get("scatter", 0) + category_counts.get("time", 0)
-n_markers = category_counts.get("target-marker", 0)
+st.plotly_chart(build_lineage_diagram(), width="stretch", config={"displayModeBar": False})
 st.caption(
-    f"{len(metadata)} channels — {n_scatter_time} scatter/time, {n_markers} markers · "
-    f"{sample.event_count:,} events"
+    "Illustrative gating tree (original), following the general strategy "
+    "described in Maecker, H. T., McCoy, J. P., & Nussenblatt, R. (2012). "
+    "Standardizing immunophenotyping for the Human Immunology Project. "
+    "*Nature Reviews Immunology*, 12(3), 191–200. "
+    "[doi:10.1038/nri3158](https://doi.org/10.1038/nri3158)."
 )
 
-array_size_mb = sample.raw_values.nbytes / (1024 * 1024)
-if array_size_mb > 300:
-    st.warning(
-        f"This file's event data is ~{array_size_mb:.0f} MB in memory — large relative to "
-        "Streamlit Community Cloud's free-tier ~1 GB budget. Some views subsample for responsiveness."
-    )
+with st.expander("T cell subsets in detail: naive/memory/effector, T-reg, TH1/TH2/TH17"):
+    st.markdown("**CD4+ differentiation**")
+    st.plotly_chart(build_cd4_differentiation_diagram(), width="stretch", config={"displayModeBar": False})
+    st.markdown("**CD8+ differentiation**")
+    st.plotly_chart(build_cd8_differentiation_diagram(), width="stretch", config={"displayModeBar": False})
+    st.markdown("**T-reg subsets**")
+    st.plotly_chart(build_treg_diagram(), width="stretch", config={"displayModeBar": False})
+    st.markdown("**TH1/TH2/TH17 subsets**")
+    st.plotly_chart(build_th_diagram(), width="stretch", config={"displayModeBar": False})
 
-# --- Basic plots ---
+with st.expander("B cell subsets in detail: naive, memory, transitional, plasmablast"):
+    st.plotly_chart(build_b_cell_diagram(), width="stretch", config={"displayModeBar": False})
 
-st.header("3. Raw view")
+with st.expander("Myeloid and NK subsets in detail: monocytes, dendritic cells, NK cells"):
+    st.plotly_chart(build_myeloid_nk_diagram(), width="stretch", config={"displayModeBar": False})
 
-rng = np.random.default_rng(0)
-plot_idx = rng.choice(len(sample.raw_values), size=min(PLOT_SUBSAMPLE_SIZE, len(sample.raw_values)), replace=False)
-workspace.plot_subsample_indices = plot_idx
-plot_values = sample.raw_values[plot_idx]
-channel_index = {name: i for i, name in enumerate(sample.pnn_labels)}
+st.divider()
 
-col_a, col_b = st.columns(2)
-with col_a:
-    if "FSC-A" in channel_index and "SSC-A" in channel_index:
-        fig = build_scatter_figure(
-            plot_values[:, channel_index["FSC-A"]], plot_values[:, channel_index["SSC-A"]],
-            "FSC-A", "SSC-A", "FSC-A vs SSC-A",
-        )
-        st.plotly_chart(fig, width="stretch")
-    else:
-        st.caption("No FSC-A/SSC-A channels in this file.")
+st.subheader("About the sample dataset")
+st.markdown(
+    """
+The sample dataset comes from a published dendritic cell and monocyte
+phenotyping panel:
 
-with col_b:
-    histogram_channel = st.selectbox("Histogram channel", sample.pnn_labels, index=0)
-    fig = build_histogram_figure(plot_values[:, channel_index[histogram_channel]], histogram_channel)
-    st.plotly_chart(fig, width="stretch")
+**Mair, F., & Liechti, T. (2021).** Comprehensive Phenotyping of Human
+Dendritic Cells and Monocytes. *Cytometry Part A*, 99(3), 231–242.
+[doi:10.1002/cyto.a.24269](https://doi.org/10.1002/cyto.a.24269)
 
-st.page_link("pages/2_Compensation.py", label="Continue to compensation assessment →")
+The paper addresses the increasingly blurred distinction between human
+dendritic cells (DCs) and monocytes, proposing two marker-pair additions to
+existing panels: **CD88/CD89** to positively identify monocytes, and
+**CD5/CD163** to subset cDC2 from the newer DC3 population.
+"""
+)
+
+st.markdown("**Marker-to-panel role mapping**")
+st.markdown(
+    """
+| Columns | Role |
+|---|---|
+| `FSC-A`, `FSC-H`, `SSC-A`, `Time` | Acquisition channels: cell size/granularity and time |
+| `Live Dead UV Blue` | Viability stain: excludes dead cells prior to phenotyping |
+| `CD3`, `CD19`, `CD20`, `CD56` | Lineage-exclusion channel: T cells, B cells, and NK cells |
+| `HLA-DR` | Pan-antigen-presenting-cell marker: gates in DCs/monocytes broadly |
+| `CD14`, `CD16`, `CD88`, `CD89` | Monocyte identification (`CD88`/`CD89` are the paper's proposed addition) |
+| `CD1c`, `CD172a` | cDC2 markers |
+| `CD5`, `CD163` | cDC2-vs-DC3 subsetting (the paper's second proposed addition) |
+| `CD141`, `XCR1`, `CADM1` | cDC1 markers |
+| `CD303`, `FcER1a` | Plasmacytoid DC (pDC) markers |
+| `CD11c`, `CD45RA`, `CD301` | Additional DC/monocyte phenotyping markers |
+"""
+)
