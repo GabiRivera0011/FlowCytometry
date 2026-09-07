@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 import plotly.graph_objects as go
+from scipy.ndimage import gaussian_filter, map_coordinates
 
 TEXT_COLOR = "#0b0b0b"
 MARKER_COLOR = "#014421"
+BACKDROP_COLOR = "#c9c9c9"
 
 
 def _percentile_range(values: np.ndarray, low_pct: float, high_pct: float) -> tuple[float, float]:
@@ -17,23 +19,54 @@ def _percentile_range(values: np.ndarray, low_pct: float, high_pct: float) -> tu
     return float(lo), float(hi)
 
 
-def _point_density(x: np.ndarray, y: np.ndarray, bins: int = 60) -> np.ndarray:
-    # Per-point local density via 2D-histogram binning: fast (O(n)), and the
-    # same approach FlowJo-style pseudocolor plots use under the hood.
+def _smoothed_density(x: np.ndarray, y: np.ndarray, bins: int = 100, sigma: float = 1.6) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # A 2D histogram plus a Gaussian blur: a fast stand-in for a true kernel
+    # density estimate. FlowJo's pseudocolor/contour plots are themselves
+    # built on a smoothed density surface, not a raw per-bin count — using
+    # the raw count directly (our first attempt) gave visible flat "patches"
+    # wherever many points shared one bin, instead of a continuous gradient.
     h, xedges, yedges = np.histogram2d(x, y, bins=bins)
-    xi = np.clip(np.digitize(x, xedges) - 1, 0, bins - 1)
-    yi = np.clip(np.digitize(y, yedges) - 1, 0, bins - 1)
-    return h[xi, yi]
+    h = gaussian_filter(h, sigma=sigma)
+    return h, xedges, yedges
 
 
-def _density_grid(x: np.ndarray, y: np.ndarray, bins: int = 60) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    # log1p-compressed 2D density on a grid, for contour/zebra fills. Flow
-    # data is heavily right-skewed (a near-empty background, one sharp
-    # peak) — contouring the raw counts leaves every band but the peak's
-    # own tip looking identical, so we log-compress the dynamic range first.
-    h, xedges, yedges = np.histogram2d(x, y, bins=bins)
+def _point_density(x: np.ndarray, y: np.ndarray, bins: int = 100, sigma: float = 1.6) -> np.ndarray:
+    # Per-point density, bilinearly interpolated from the smoothed grid.
+    # Nearest-bin lookup (np.digitize) still shows a visible block edge
+    # wherever two neighboring points fall in different bins, even once the
+    # grid itself is smoothed — interpolating between bin centers removes
+    # that last bit of blockiness and gives a genuinely continuous gradient.
+    h, xedges, yedges = _smoothed_density(x, y, bins=bins, sigma=sigma)
+    xwidth = (xedges[-1] - xedges[0]) / bins
+    ywidth = (yedges[-1] - yedges[0]) / bins
+    xi = np.clip((x - xedges[0]) / xwidth - 0.5, 0, bins - 1)
+    yi = np.clip((y - yedges[0]) / ywidth - 0.5, 0, bins - 1)
+    return map_coordinates(h, [xi, yi], order=1, mode="nearest")
+
+
+def _contour_grid(x: np.ndarray, y: np.ndarray, bins: int = 100, sigma: float = 1.1) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # log1p-compressed, smoothed 2D density on a grid, for contour/zebra. A
+    # lighter blur than the pseudocolor grid — enough to draw a clean line,
+    # not so much that the outline balloons past where the dots actually sit.
+    h, xedges, yedges = _smoothed_density(x, y, bins=bins, sigma=sigma)
     xcenters, ycenters = (xedges[:-1] + xedges[1:]) / 2, (yedges[:-1] + yedges[1:]) / 2
     return np.log1p(h.T), xcenters, ycenters
+
+
+def _contour_levels(z: np.ndarray, n_levels: int, low_pct: float = 55.0) -> tuple[float, float, float]:
+    # Start contouring above the bottom `low_pct` of nonzero density, not at
+    # the fringe of a single stray point — log-compression otherwise pulls
+    # the outermost line out to hug every sparse outlier, making the contour
+    # look far bigger than the actual dot cloud it's supposed to trace.
+    nonzero = z[z > 0]
+    if len(nonzero) == 0:
+        return 0.0, 1.0, 1.0
+    z_min = float(np.percentile(nonzero, low_pct))
+    z_max = float(z.max())
+    if z_max <= z_min:
+        z_min = 0.0
+    size = (z_max - z_min) / n_levels if z_max > z_min else 1.0
+    return z_min, z_max, size
 
 
 def _zebra_colorscale(n_bands: int = 8) -> list:
@@ -42,7 +75,7 @@ def _zebra_colorscale(n_bands: int = 8) -> list:
     # Plotly trick for a stepped rather than interpolated colorscale.
     scale = []
     for i in range(n_bands):
-        color = "#111111" if i % 2 == 0 else "#f5f5f5"
+        color = "#f5f5f5" if i % 2 == 0 else "#111111"
         scale.append([i / n_bands, color])
         scale.append([(i + 1) / n_bands, color])
     return scale
@@ -57,19 +90,27 @@ def build_scatter_figure(
     x_range, y_range = _percentile_range(x, *pct_range), _percentile_range(y, *pct_range)
 
     if mode in ("contour", "zebra"):
-        # Density-only reference views (FlowJo-style contour/zebra): drawn
-        # from a 2D density surface, not one mark per event, so box/lasso
-        # gating can't map back to individual events here — the caller keeps
-        # dragmode off "select" for these two modes.
-        z, xcenters, ycenters = _density_grid(x, y)
+        # Density-only reference views (FlowJo-style contour/zebra), drawn
+        # from a 2D density surface rather than one mark per event.
+        z, xcenters, ycenters = _contour_grid(x, y)
         if mode == "zebra":
-            contour_kwargs = dict(colorscale=_zebra_colorscale(), showscale=False, ncontours=10)
+            z_start, z_end, z_size = _contour_levels(z, n_levels=8)
+            fig = go.Figure(go.Contour(
+                x=xcenters, y=ycenters, z=z, showscale=False,
+                contours=dict(start=z_start, end=z_end, size=z_size, coloring="fill", showlines=True),
+                colorscale=_zebra_colorscale(), line=dict(width=0.5, color="rgba(0,0,0,0.35)"),
+            ))
         else:
-            contour_kwargs = dict(colorscale="Jet", showscale=True, ncontours=15)
-        fig = go.Figure(go.Contour(
-            x=xcenters, y=ycenters, z=z, contours=dict(coloring="fill", showlines=True),
-            line=dict(width=0.5, color="rgba(0,0,0,0.4)"), **contour_kwargs,
-        ))
+            # FlowJo's classic contour plot: solid black outline levels on a
+            # plain white background. `coloring="lines"` would still color
+            # each level off the colorscale — "none" is what makes every
+            # line just take the constant `line.color` below.
+            z_start, z_end, z_size = _contour_levels(z, n_levels=12)
+            fig = go.Figure(go.Contour(
+                x=xcenters, y=ycenters, z=z, showscale=False,
+                contours=dict(start=z_start, end=z_end, size=z_size, coloring="none", showlabels=False),
+                line=dict(width=1.1, color="#1a1a1a"),
+            ))
     else:
         if mode == "pseudocolor":
             # FlowJo-style density plot: still one point per event (so
@@ -130,6 +171,62 @@ def build_log_histogram_figure(values: np.ndarray, channel_name: str, nbins: int
     fig.update_layout(
         template="simple_white", font_color=TEXT_COLOR,
         title=f"{channel_name} (log)", xaxis_title=channel_name,
+    )
+    fig.update_xaxes(type="log", range=[np.log10(lo), np.log10(hi)])
+    return fig
+
+
+def build_gated_histogram_figure(
+    all_values: np.ndarray, gated_values: np.ndarray, channel_name: str, color: str, nbins: int = 100,
+) -> go.Figure:
+    """Full incoming population as a fixed gray backdrop, with the currently
+    gated subset overlaid in color on the same bins. The axis range and bin
+    edges come only from `all_values`, so the histogram itself never moves —
+    only the highlighted overlay changes shape as the gate is adjusted."""
+    lo, hi = _percentile_range(all_values, 0.5, 99.5)
+    xbins = dict(start=lo, end=hi, size=(hi - lo) / nbins)
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=all_values, name="All events", marker_color=BACKDROP_COLOR, xbins=xbins, opacity=0.7))
+    fig.add_trace(go.Histogram(x=gated_values, name="Gated", marker_color=color, xbins=xbins, opacity=0.9))
+    fig.update_layout(
+        template="simple_white", font_color=TEXT_COLOR, barmode="overlay",
+        title=channel_name, xaxis_title=channel_name,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    fig.update_xaxes(range=[lo, hi])
+    return fig
+
+
+def build_gated_log_histogram_figure(
+    all_values: np.ndarray, gated_values: np.ndarray, channel_name: str, color: str, nbins: int = 60,
+) -> go.Figure:
+    """Log-scale counterpart of `build_gated_histogram_figure`: bins are
+    fixed from `all_values` (evenly spaced in log space), and the gated
+    subset is rebinned onto those same edges so the two overlay cleanly."""
+    positive_all = all_values[all_values > 0]
+    if len(positive_all) < 2:
+        fig = go.Figure()
+        fig.update_layout(template="simple_white", font_color=TEXT_COLOR, title=f"{channel_name} (log)")
+        return fig
+
+    lo, hi = _percentile_range(positive_all, 0.5, 99.5)
+    lo = max(lo, float(positive_all.min()))
+    if hi <= lo:
+        lo, hi = float(positive_all.min()), float(positive_all.max())
+    edges = np.logspace(np.log10(lo), np.log10(hi), nbins + 1)
+    centers = np.sqrt(edges[:-1] * edges[1:])
+    widths = edges[1:] - edges[:-1]
+
+    all_counts, _ = np.histogram(positive_all, bins=edges)
+    gated_counts, _ = np.histogram(gated_values[gated_values > 0], bins=edges)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=centers, y=all_counts, width=widths, name="All events", marker_color=BACKDROP_COLOR, opacity=0.7))
+    fig.add_trace(go.Bar(x=centers, y=gated_counts, width=widths, name="Gated", marker_color=color, opacity=0.9))
+    fig.update_layout(
+        template="simple_white", font_color=TEXT_COLOR, barmode="overlay",
+        title=f"{channel_name} (log)", xaxis_title=channel_name,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
     )
     fig.update_xaxes(type="log", range=[np.log10(lo), np.log10(hi)])
     return fig

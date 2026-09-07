@@ -17,10 +17,11 @@ def set3_color(index: int) -> str:
     return SET3[index % len(SET3)]
 
 
-# The four darkest Set3 hues by relative luminance (purple, coral, blue,
-# lavender) — used on the gating pages, where markers, outlines, and card
-# borders all need to read clearly against a white background.
-DARK_SET3 = ["#bc80bd", "#fb8072", "#80b1d3", "#bebada"]
+# The six darkest Set3 hues by relative luminance (purple, coral, blue,
+# lavender, orange, teal) — used on the gating pages, where markers,
+# outlines, and card borders all need to read clearly against a white
+# background.
+DARK_SET3 = ["#bc80bd", "#fb8072", "#80b1d3", "#bebada", "#fdb462", "#8dd3c7"]
 
 
 def dark_set3_color(index: int) -> str:
