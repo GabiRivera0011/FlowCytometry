@@ -73,3 +73,4 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
 ## References
 
 - [FlowRepository](http://flowrepository.org/) — public repository of flow cytometry datasets, used as the source of sample `.fcs` files for development and testing
+- Mair, F., & Liechti, T. (2021). Comprehensive Phenotyping of Human Dendritic Cells and Monocytes. *Cytometry Part A*, 99(3), 231–242. https://doi.org/10.1002/cyto.a.24269 — source of the dendritic cell/monocyte panel data (`data/pbmc_s1.csv`, `data/*.fcs`) used in this project
