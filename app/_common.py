@@ -33,6 +33,6 @@ def get_workspace():
 def require_sample():
     workspace = get_workspace()
     if workspace.sample is None:
-        st.info("Upload a sample file on the Home page first.")
+        st.info("Upload a sample file on the Parse and View page first.")
         st.stop()
     return workspace

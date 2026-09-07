@@ -67,7 +67,7 @@ def _build_tree_figure(
 # --- Overview: the top-level lineage split ---
 
 OVERVIEW_NODES = [
-    ("live", "Live cells", 3.0, 3, None, ROOT_COLOR),
+    ("live", "PBMC (Live)", 3.0, 3, None, ROOT_COLOR),
     ("lymph", "Lymphocytes\nFSC/SSC: small, agranular", 1.3, 2, "live", LYMPHOID_COLOR),
     ("myeloid", "Myeloid cells\nFSC/SSC: larger, granular", 4.7, 2, "live", MYELOID_COLOR),
     ("t", "T cells\nCD3+", 0.3, 1, "lymph", LYMPHOID_COLOR),

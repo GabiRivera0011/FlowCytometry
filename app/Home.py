@@ -16,7 +16,7 @@ from flowcyto.viz.lineage import (
 
 st.set_page_config(page_title="FlowCytometry", layout="wide")
 st.title("Immune Cell Identification using Flow Cytometry")
-st.caption("An automated flow cytometry analysis workflow.")
+st.caption("A flow cytometry analysis workflow.")
 
 workspace = get_workspace()
 
@@ -42,8 +42,20 @@ with col2:
 
 with col3:
     st.subheader("3. Gating — Live Cells")
-    st.write("Gate down to live, single cells before further analysis. Coming soon.")
+    st.write("Gate out debris, doublets, and dead cells: acquisition QC, forward/side scatter, singlets, and viability.")
     st.page_link("pages/3_Gating_-_Live_Cells.py", label="Open →")
+
+col4, col5 = st.columns(3)[:2]
+
+with col4:
+    st.subheader("4. Gating — Broad Cellular Lineage")
+    st.write("Split live cells into lymphocytes vs. myeloid cells, then lineage-positive vs. HLA-DR+ antigen-presenting cells.")
+    st.page_link("pages/4_Gating_-_Broad_Cellular_Lineage.py", label="Open →")
+
+with col5:
+    st.subheader("5. Gating — Subset Cell Population")
+    st.write("Separate monocytes from dendritic cells, then explore cDC1/cDC2/pDC subsets among the dendritic cells.")
+    st.page_link("pages/5_Gating_-_Subset_Cell_Population.py", label="Open →")
 
 st.divider()
 
