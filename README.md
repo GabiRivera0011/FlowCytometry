@@ -58,15 +58,15 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
 
 ## Phase 1 Checklist — Parse & View
 
-- [ ] Add sample small `.fcs` file(s) to `tests/fixtures/` for local/offline testing
-- [ ] `src/flowcyto/io`: load an `.fcs` file with FlowKit, return a `Sample` (metadata + event `DataFrame`)
-- [ ] `tests/`: unit tests for `io` against the fixture files
-- [ ] `src/flowcyto/state.py`: `Workspace` dataclass to hold the loaded `Sample` in `st.session_state`
-- [ ] `src/flowcyto/viz`: basic Plotly scatter + histogram figure builders for raw channels
-- [ ] `app/Home.py`: file upload widget → parse via `flowcyto.io` → store in `Workspace`
-- [ ] `app/Home.py`: display metadata (channel list, event count, file info)
-- [ ] `app/Home.py`: render raw scatter/histogram using `flowcyto.viz`
-- [ ] Run locally (`streamlit run app/Home.py`) and verify with a real `.fcs` file
+- [x] Add sample small `.fcs` file(s) to `tests/fixtures/` for local/offline testing
+- [x] `src/flowcyto/io`: load an `.fcs` file with FlowKit, return a `Sample` (metadata + event `DataFrame`)
+- [x] `tests/`: unit tests for `io` against the fixture files
+- [x] `src/flowcyto/state.py`: `Workspace` dataclass to hold the loaded `Sample` in `st.session_state`
+- [x] `src/flowcyto/viz`: basic Plotly scatter + histogram figure builders for raw channels
+- [x] `app/Home.py`: file upload widget → parse via `flowcyto.io` → store in `Workspace`
+- [x] `app/Home.py`: display metadata (channel list, event count, file info)
+- [x] `app/Home.py`: render raw scatter/histogram using `flowcyto.viz`
+- [x] Run locally (`streamlit run app/Home.py`) and verify with a real `.fcs` file
 - [ ] Deploy to Streamlit Community Cloud and confirm `requirements.txt` is picked up
 - [ ] Confirm session-only behavior (data clears on refresh / new session, as expected for v1)
 
