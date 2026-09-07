@@ -15,7 +15,7 @@ from flowcyto.viz.lineage import (
 )
 
 st.set_page_config(page_title="FlowCytometry", layout="wide")
-st.title("Flow Cytometry Immune Cell Identification")
+st.title("Immune Cell Identification using Flow Cytometry")
 st.caption("An automated flow cytometry analysis workflow.")
 
 workspace = get_workspace()

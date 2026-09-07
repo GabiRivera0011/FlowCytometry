@@ -177,5 +177,22 @@ with st.expander("Full matrix (heatmap)"):
         )
 
 st.divider()
-st.caption("Clicking Next runs the Gating — Live Cells page. Allow it a moment to pick up any changes made here.")
-st.page_link("pages/3_Gating_-_Live_Cells.py", label="Next: Gating — Live Cells →")
+st.html(
+    """<style>
+    .st-key-next_button button[kind="primary"] {
+        background-color: #8fd9b6; color: #014421; border-color: #6cc79b;
+    }
+    .st-key-next_button button[kind="primary"]:hover,
+    .st-key-next_button button[kind="primary"]:active,
+    .st-key-next_button button[kind="primary"]:focus:not(:active) {
+        background-color: #7bcea3; color: #014421; border-color: #5cb98a;
+    }
+    </style>"""
+)
+back_col, next_col = st.columns(2)
+with back_col:
+    if st.button("← Back: Parse and View", width="stretch"):
+        st.switch_page("pages/1_Parse_and_View.py")
+with next_col:
+    if st.button("Next: Gating — Live Cells →", width="stretch", type="primary", key="next_button"):
+        st.switch_page("pages/3_Gating_-_Live_Cells.py")

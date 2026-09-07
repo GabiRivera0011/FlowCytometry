@@ -12,3 +12,7 @@ sample = workspace.sample
 
 st.info("Coming soon — this page will gate down to live, single cells before further analysis.")
 st.caption(f"Current sample: **{sample.filename}** — {sample.event_count:,} events, {len(sample.pnn_labels)} channels.")
+
+st.divider()
+if st.button("← Back: Compensation", width="stretch"):
+    st.switch_page("pages/2_Compensation.py")
