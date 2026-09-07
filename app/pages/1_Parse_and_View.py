@@ -16,7 +16,7 @@ from flowcyto.io.types import LoadedSample
 from flowcyto.viz.raw import build_histogram_figure, build_scatter_figure
 
 st.set_page_config(page_title="Parse and View — FlowCytometry", layout="wide")
-st.title("Parse and View")
+st.title("Parse and View Dataset")
 
 workspace = get_workspace()
 
