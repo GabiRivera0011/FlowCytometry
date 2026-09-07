@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from flowcyto.io.csv_source import load_csv
 from flowcyto.io.fcs import load_fcs
 from flowcyto.io.metadata import build_channel_metadata
 
@@ -31,3 +32,27 @@ def test_channel_metadata_classifies_scatter_time_and_markers():
     assert marker_row["category"] == "target-marker"
     assert marker_row["target"] == "CD11c"
     assert marker_row["marker"] == "APC"
+
+
+def test_load_csv_reads_events_and_uses_headers_as_labels():
+    sample = load_csv(FIXTURES / "pbmc_sample.csv", "pbmc_sample.csv")
+    assert sample.source_format == "csv"
+    assert sample.event_count == 2000
+    assert sample.raw_values.shape == (2000, len(sample.pnn_labels))
+    assert sample.raw_values.dtype.name == "float32"
+    assert sample.pns_labels is None
+    assert sample.fcs_keywords is None
+    assert "CD11c APC" in sample.pnn_labels
+
+
+def test_csv_metadata_matches_fcs_metadata_for_the_same_data():
+    csv_sample = load_csv(FIXTURES / "pbmc_sample.csv", "pbmc_sample.csv")
+    csv_metadata = build_channel_metadata(csv_sample)
+
+    marker_row = csv_metadata[csv_metadata["channel"] == "CD11c APC"].iloc[0]
+    assert marker_row["category"] == "target-marker"
+    assert marker_row["target"] == "CD11c"
+    assert marker_row["marker"] == "APC"
+
+    fsc_row = csv_metadata[csv_metadata["channel"] == "FSC-A"].iloc[0]
+    assert fsc_row["category"] == "scatter"
