@@ -1,32 +1,26 @@
 from __future__ import annotations
 
-import hashlib
-import io
 from pathlib import Path
 
 import flowkit as fk
 import numpy as np
 
+from flowcyto.io._util import content_hash as _content_hash
 from flowcyto.io.types import LoadedSample
 
 SCATTER_TIME_CHANNELS = {"FSC-A", "FSC-H", "SSC-A", "Time"}
-
-
-def _read_bytes(file_or_path) -> bytes:
-    if isinstance(file_or_path, (str, Path)):
-        return Path(file_or_path).read_bytes()
-    return file_or_path.getvalue()  # Streamlit's UploadedFile / a BytesIO
 
 
 def load_fcs(file_or_path, filename: str) -> LoadedSample:
     """Load an FCS file (path or an uploaded file-like object) into a
     LoadedSample. Downcasts raw event values to float32 and lets the FlowKit
     Sample object go out of scope immediately after extraction — holding a
-    second full-size copy isn't affordable on the free tier's ~1GB budget."""
-    data = _read_bytes(file_or_path)
-    content_hash = hashlib.md5(data).hexdigest()
+    second full-size copy isn't affordable on the free tier's ~1GB budget.
+    A path is handed to FlowKit directly (it does its own file reading)
+    rather than pre-buffering the whole file into a bytes object first."""
+    content_hash = _content_hash(file_or_path)
 
-    fk_sample = fk.Sample(io.BytesIO(data))
+    fk_sample = fk.Sample(str(file_or_path) if isinstance(file_or_path, (str, Path)) else file_or_path)
     pnn_labels = list(fk_sample.pnn_labels)
     pns_labels = list(fk_sample.pns_labels)
     fcs_keywords = dict(fk_sample.get_metadata())
