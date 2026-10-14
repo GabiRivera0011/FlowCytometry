@@ -27,6 +27,12 @@ class Workspace:
     last_diagnostic: SlopeDiagnosticResult | None = None
     plot_subsample_indices: np.ndarray | None = None
 
+    # Final gated population handed from one gating page to the next —
+    # boolean mask over `plot_subsample_indices`, not the full event array.
+    live_cells_mask: np.ndarray | None = None
+    lymphocytes_mask: np.ndarray | None = None
+    myeloid_mask: np.ndarray | None = None
+
     # stubs for later phases, per docs/ARCHITECTURE.md's full stated Workspace scope
     gating_strategy: Any | None = None
     transforms: dict | None = None

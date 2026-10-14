@@ -84,6 +84,21 @@ def build_lineage_diagram() -> go.Figure:
     return _build_tree_figure(OVERVIEW_NODES, x_range=[-0.9, 6.1], y_range=[-0.5, 3.5])
 
 
+def build_live_split_diagram(live_n: int, lymphocyte_n: int, myeloid_n: int, lymphocyte_label: str = "Lymphocytes", myeloid_label: str = "Myeloid cells") -> go.Figure:
+    """Live, data-driven counterpart to the overview diagram's top split —
+    drawn fresh from the gates actually drawn on the Broad Cellular Lineage
+    page (real counts), not the static illustrative labels above."""
+    def pct(n: int) -> str:
+        return f"{n / live_n * 100:.1f}%" if live_n else "—"
+
+    nodes = [
+        ("live", f"Live cells\n{live_n:,} events", 1.5, 2, None, ROOT_COLOR),
+        ("lymph", f"{lymphocyte_label}\n{lymphocyte_n:,} events ({pct(lymphocyte_n)})", 0.3, 1, "live", LYMPHOID_COLOR),
+        ("myeloid", f"{myeloid_label}\n{myeloid_n:,} events ({pct(myeloid_n)})", 2.7, 1, "live", MYELOID_COLOR),
+    ]
+    return _build_tree_figure(nodes, x_range=[-0.5, 3.5], y_range=[0.35, 2.65], height=230, box_half_width=0.56)
+
+
 # --- Detail: T cell subsets, split into four small trees so every box has
 # room for its full marker label — one wide 20-node tree does not fit any
 # reasonably-sized page column without shrinking text past legibility. ---

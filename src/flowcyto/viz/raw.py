@@ -128,6 +128,13 @@ def build_scatter_figure(
     fig.update_layout(
         template="simple_white", font_color=TEXT_COLOR,
         title=title, xaxis_title=x_label, yaxis_title=y_label,
+        # Keeps the user's own zoom/pan across a rerun that redraws this same
+        # plot (e.g. adjusting a gate) — without it, Plotly treats each
+        # redraw as a brand new figure and snaps back to `x_range`/`y_range`
+        # below, which is exactly the "zoom resets while gating" bug this
+        # fixes. Stable as long as the channel pair (encoded in `title`)
+        # doesn't change; a genuinely different plot still resets normally.
+        uirevision=title,
     )
     fig.update_xaxes(range=x_range)
     fig.update_yaxes(range=y_range)
@@ -143,6 +150,7 @@ def build_histogram_figure(values: np.ndarray, channel_name: str, nbins: int = 1
     fig.update_layout(
         template="simple_white", font_color=TEXT_COLOR,
         title=channel_name, xaxis_title=channel_name,
+        uirevision=channel_name,
     )
     fig.update_xaxes(range=[lo, hi])
     return fig
@@ -155,7 +163,7 @@ def build_log_histogram_figure(values: np.ndarray, channel_name: str, nbins: int
     positive = values[values > 0]
     if len(positive) < 2:
         fig = go.Figure()
-        fig.update_layout(template="simple_white", font_color=TEXT_COLOR, title=f"{channel_name} (log)")
+        fig.update_layout(template="simple_white", font_color=TEXT_COLOR, title=f"{channel_name} (log)", uirevision=f"{channel_name}_log")
         return fig
 
     lo, hi = _percentile_range(positive, 0.5, 99.5)
@@ -171,6 +179,7 @@ def build_log_histogram_figure(values: np.ndarray, channel_name: str, nbins: int
     fig.update_layout(
         template="simple_white", font_color=TEXT_COLOR,
         title=f"{channel_name} (log)", xaxis_title=channel_name,
+        uirevision=f"{channel_name}_log",
     )
     fig.update_xaxes(type="log", range=[np.log10(lo), np.log10(hi)])
     return fig
@@ -192,6 +201,7 @@ def build_gated_histogram_figure(
         template="simple_white", font_color=TEXT_COLOR, barmode="overlay",
         title=channel_name, xaxis_title=channel_name,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        uirevision=channel_name,
     )
     fig.update_xaxes(range=[lo, hi])
     return fig
@@ -206,7 +216,7 @@ def build_gated_log_histogram_figure(
     positive_all = all_values[all_values > 0]
     if len(positive_all) < 2:
         fig = go.Figure()
-        fig.update_layout(template="simple_white", font_color=TEXT_COLOR, title=f"{channel_name} (log)")
+        fig.update_layout(template="simple_white", font_color=TEXT_COLOR, title=f"{channel_name} (log)", uirevision=f"{channel_name}_log")
         return fig
 
     lo, hi = _percentile_range(positive_all, 0.5, 99.5)
@@ -227,6 +237,7 @@ def build_gated_log_histogram_figure(
         template="simple_white", font_color=TEXT_COLOR, barmode="overlay",
         title=f"{channel_name} (log)", xaxis_title=channel_name,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        uirevision=f"{channel_name}_log",
     )
     fig.update_xaxes(type="log", range=[np.log10(lo), np.log10(hi)])
     return fig

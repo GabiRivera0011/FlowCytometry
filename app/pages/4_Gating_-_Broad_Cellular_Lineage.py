@@ -5,17 +5,29 @@ from _common import ensure_src_on_path, require_sample
 
 ensure_src_on_path()
 
+from _gating_widgets import GATING_WIDGET_CSS, render_section_gates
 from flowcyto.io.metadata import build_channel_metadata
 from flowcyto.viz.bars import dark_set3_color
-from flowcyto.viz.raw import build_scatter_figure
+from flowcyto.viz.lineage import build_live_split_diagram
 
 st.set_page_config(page_title="Gating - Broad Cellular Lineage — FlowCytometry", layout="wide")
 st.title("Gating — Broad Cellular Lineage")
 
+st.html(
+    """<style>
+    .st-key-gate_card_lymphocytes, .st-key-gate_card_myeloid {
+        border-radius: 16px !important;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+        padding: 1.5rem 1.75rem;
+    }
+    .st-key-gate_card_lymphocytes { border: 2px solid """ + dark_set3_color(0) + """ !important; }
+    .st-key-gate_card_myeloid     { border: 2px solid """ + dark_set3_color(2) + """ !important; }
+    </style>"""
+    + GATING_WIDGET_CSS
+)
+
 workspace = require_sample()
 sample = workspace.sample
-
-st.caption(f"Current sample: **{sample.filename}** — {sample.event_count:,} events, {len(sample.pnn_labels)} channels.")
 
 channel_index = {name: i for i, name in enumerate(sample.pnn_labels)}
 
@@ -44,44 +56,84 @@ def channel_values(channel: str) -> np.ndarray:
     return plot_values[:, channel_index[channel]]
 
 
+# The starting population is whatever Live Cells (the previous page) landed
+# on — not re-derived here, so this page always reflects that page's gates,
+# including any later adjustment there.
+if workspace.live_cells_mask is not None and len(workspace.live_cells_mask) == len(plot_idx):
+    live_mask = workspace.live_cells_mask
+    incoming = int(live_mask.sum())
+    st.caption(f"Starting population: **{incoming:,}** Live cells carried over from the previous page.")
+else:
+    live_mask = np.ones(len(plot_idx), dtype=bool)
+    incoming = int(live_mask.sum())
+    st.info("No Live cells gate found yet — showing the full subsampled population. Visit **Gating — Live Cells** first for a cleaner starting point.")
+
 metadata = build_channel_metadata(sample)
-lineage_candidates = metadata.loc[metadata["target"].isin(["CD3", "CD19", "CD20", "CD56"]), "channel"].tolist()
-apc_candidates = metadata.loc[metadata["target"] == "HLA-DR", "channel"].tolist()
+target_by_channel = dict(zip(metadata["channel"], metadata["target"]))
 
-GATE_PCT = (5, 95)  # autoscale each axis to its central 90% of the data
 
-# --- Lymphocytes vs myeloid ---
+def channel_label(channel: str) -> str:
+    target = target_by_channel.get(channel)
+    return f"{channel} — {target}" if isinstance(target, str) and target else channel
+
+
+# Pre-seed each plot's single gate with the name this page exists to make,
+# so both open ready to draw rather than with a generic "Gate 1".
+if "n_gates_lymphocytes" not in st.session_state:
+    st.session_state["n_gates_lymphocytes"] = 1
+    st.session_state["gate_lymphocytes_0_name"] = "Lymphocytes"
+if "n_gates_myeloid" not in st.session_state:
+    st.session_state["n_gates_myeloid"] = 1
+    st.session_state["gate_myeloid_0_name"] = "Myeloid cells"
+
 st.header("Lymphocytes vs. myeloid cells")
-st.caption("Forward vs. side scatter. Lymphocytes read small and agranular (lower FSC/SSC); myeloid cells read larger and more granular (higher FSC/SSC).")
-if "FSC-A" in channel_index and "SSC-A" in channel_index:
-    fig = build_scatter_figure(
-        channel_values("FSC-A"), channel_values("SSC-A"),
-        "FSC-A", "SSC-A", "FSC-A vs SSC-A", pct_range=GATE_PCT, color=dark_set3_color(0),
-    )
-    st.plotly_chart(fig, width="stretch")
-else:
-    st.caption("No FSC-A/SSC-A channels in this file — skipping.")
 
-st.divider()
+channel_options = list(sample.pnn_labels)
+default_x = "FSC-A" if "FSC-A" in channel_options else channel_options[0]
+default_y = "SSC-A" if "SSC-A" in channel_options else channel_options[min(1, len(channel_options) - 1)]
 
-# --- Lineage vs HLA-DR ---
-st.header("Lineage vs. HLA-DR")
-st.caption(
-    "Antigen-presenting/myeloid cells read HLA-DR+ and lineage-negative. "
-    "T, B, and NK lymphocytes read lineage-positive and HLA-DR-negative."
-)
-if lineage_candidates and apc_candidates:
-    lineage_channel = st.selectbox("Lineage marker (CD3 / CD19 / CD20 / CD56)", lineage_candidates)
-    apc_channel = apc_candidates[0]
-    if workspace.spillover_matrix is None:
+
+def render_axis_pickers(key_prefix: str):
+    col1, col2 = st.columns(2)
+    with col1:
+        x = st.selectbox("X axis marker", channel_options, index=channel_options.index(default_x), format_func=channel_label, key=f"{key_prefix}_x")
+    with col2:
+        y = st.selectbox("Y axis marker", channel_options, index=channel_options.index(default_y), format_func=channel_label, key=f"{key_prefix}_y")
+    if workspace.spillover_matrix is None and (x in fluor_channels or y in fluor_channels):
         st.caption("Showing raw marker channels — visit Compensation first for a cleaner separation.")
-    fig = build_scatter_figure(
-        channel_values(lineage_channel), channel_values(apc_channel),
-        lineage_channel, apc_channel, f"{lineage_channel} vs {apc_channel}", pct_range=GATE_PCT, color=dark_set3_color(1),
+    return x, y
+
+
+with st.container(key="gate_card_lymphocytes", border=True):
+    st.subheader("Lymphocytes")
+    lymph_x, lymph_y = render_axis_pickers("lymph")
+    lymph_names, lymph_colors, lymph_masks = render_section_gates(
+        "lymphocytes", live_mask, lymph_x, lymph_y, channel_values(lymph_x), channel_values(lymph_y), color_offset=0,
     )
-    st.plotly_chart(fig, width="stretch")
-else:
-    st.caption("No lineage marker (CD3/CD19/CD20/CD56) or HLA-DR channel found in this file — skipping.")
+
+with st.container(key="gate_card_myeloid", border=True):
+    st.subheader("Myeloid cells")
+    myeloid_x, myeloid_y = render_axis_pickers("myeloid")
+    myeloid_names, myeloid_colors, myeloid_masks = render_section_gates(
+        "myeloid", live_mask, myeloid_x, myeloid_y, channel_values(myeloid_x), channel_values(myeloid_y), color_offset=2,
+    )
+
+lymph_label = lymph_names[0] if lymph_names else "Lymphocytes"
+myeloid_label = myeloid_names[0] if myeloid_names else "Myeloid cells"
+lymph_mask = lymph_masks[0] if lymph_masks else np.zeros(len(plot_idx), dtype=bool)
+myeloid_mask = myeloid_masks[0] if myeloid_masks else np.zeros(len(plot_idx), dtype=bool)
+
+st.plotly_chart(
+    build_live_split_diagram(incoming, int(lymph_mask.sum()), int(myeloid_mask.sum()), lymph_label, myeloid_label),
+    width="stretch", config={"displayModeBar": False},
+)
+extra_lymph, extra_myeloid = len(lymph_names) - 1, len(myeloid_names) - 1
+if extra_lymph > 0 or extra_myeloid > 0:
+    bits = [f"{n} extra {label} gate(s)" for n, label in [(extra_lymph, "Lymphocytes"), (extra_myeloid, "Myeloid")] if n > 0]
+    st.caption(f"{' and '.join(bits)} drawn above aren't shown in the split diagram, but are still available to later pages.")
+
+workspace.lymphocytes_mask = lymph_mask
+workspace.myeloid_mask = myeloid_mask
 
 st.divider()
 st.html(
