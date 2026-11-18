@@ -62,6 +62,13 @@ with col6:
     st.write("View every gate defined across the gating pages in a single table, including event counts, percentage of subsample, percentage of Live cells, and exact counts in the full file.")
     st.page_link("pages/6_Gating_Summary.py", label="Open →")
 
+col7, _col8, _col9 = st.columns(3)
+
+with col7:
+    st.subheader("7. Marker Map")
+    st.write("A literal 3D scatter of every subsampled event across three markers you pick directly, colored by a 4th marker or by one or more already-defined gates.")
+    st.page_link("pages/7_Marker_Map.py", label="Open →")
+
 st.divider()
 
 if workspace.sample is None:

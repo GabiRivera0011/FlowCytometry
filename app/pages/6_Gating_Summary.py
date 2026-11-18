@@ -147,5 +147,22 @@ else:
     )
 
 st.divider()
-if st.button("← Back: Subset Cell Population", width="stretch"):
-    st.switch_page("pages/5_Gating_-_Subset_Cell_Population.py")
+st.html(
+    """<style>
+    .st-key-next_button button[kind="primary"] {
+        background-color: #8fd9b6; color: #014421; border-color: #6cc79b;
+    }
+    .st-key-next_button button[kind="primary"]:hover,
+    .st-key-next_button button[kind="primary"]:active,
+    .st-key-next_button button[kind="primary"]:focus:not(:active) {
+        background-color: #7bcea3; color: #014421; border-color: #5cb98a;
+    }
+    </style>"""
+)
+back_col, next_col = st.columns(2)
+with back_col:
+    if st.button("← Back: Subset Cell Population", width="stretch"):
+        st.switch_page("pages/5_Gating_-_Subset_Cell_Population.py")
+with next_col:
+    if st.button("Next: Marker Map →", width="stretch", type="primary", key="next_button"):
+        st.switch_page("pages/7_Marker_Map.py")

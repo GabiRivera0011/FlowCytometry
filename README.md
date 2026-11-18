@@ -20,7 +20,7 @@ Core library              ▼
                          ├── io            FCS/CSV parsing (FlowKit), metadata
                          ├── compensation  spillover matrix: controls, diagnostics, search
                          ├── transforms    arcsinh display transform (fluorescence channels)
-                         └── viz           Plotly figure builders (scatter, bars, heatmap, pairs)
+                         └── viz           Plotly figure builders (scatter, bars, heatmap, pairs, scatter3d)
 ```
 
 Interactive gating itself is Streamlit-coupled (session_state, Plotly select
@@ -28,7 +28,9 @@ events) and lives in `app/_gating_widgets.py` rather than `src/flowcyto` —
 see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the reasoning. Of the
 two modules planned early on, `transforms` now holds the arcsinh display
 transform (see *Statistical & math approach* below); `clustering` (PCA/UMAP
-+ KMeans) is still an empty stub.
++ KMeans) was tried for the Marker Map page and then removed entirely — that
+page now plots markers directly rather than through a dimensionality-reduced
+layout, so there's no longer a `clustering` module in this codebase.
 
 Full details, diagrams, and module responsibilities: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 (note: that doc still describes the original phased plan and is not fully
@@ -65,6 +67,9 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
    workspaces for further rounds of subsetting, branching from any earlier gate.
 6. **Gating Summary** — every gate drawn across the gating pages, tabulated
    with exact event counts resolved against the full (un-subsampled) file.
+7. **Marker Map** — a literal 3D scatter of every subsampled event across three
+   markers chosen directly for X/Y/Z, colored by a 4th marker or by one or
+   more previously-defined gates.
 
 ## Statistical & math approach
 
@@ -176,6 +181,29 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
   the boundary was drawn against a sparse or misleading view of the
   population and may need redrawing, e.g. in Pseudocolor/Contour view.
 
+### Marker Map
+
+- A **literal 3D scatter of every subsampled event**
+  (`flowcyto.viz.scatter3d:build_marker_scatter3d_figure`), not a
+  dimensionality-reduced layout: X, Y, and Z are three real marker
+  channels chosen directly, exactly like the 2D gating plots, just with a
+  third axis — so each axis keeps its own real meaning and units, rather
+  than an abstract "Map 1/2/3". A PCA/UMAP embedding version of this page
+  was tried first and then replaced with this literal-axes approach.
+- **Two coloring modes, not combined** — mixing a continuous gradient with
+  discrete "in/out of gate" categories on the same points isn't readable:
+  - **Marker**: a 4th marker's own (arcsinh-transformed) expression as a
+    continuous gradient, percentile-clipped the same way other plots in
+    this app are so a few extreme outliers don't wash out the color scale.
+  - **Gated population(s)**: one or more already-defined gates (from any
+    gating page, including dynamic Subset Cell Population plots), each in
+    its own solid color via `dark_set3_color` — reusing
+    `collect_section_gates` the same way the Gating Summary page does,
+    since a gate's subsample-length mask lines up with the scatter's
+    points directly (no full-dataset resolution needed here — this page
+    only ever covers the subsample). Everything not in a selected gate
+    falls back to a neutral gray so the highlighted population(s) stand out.
+
 ### Remaining known gaps
 
 - **Arcsinh, not full Logicle/Hyperlog.** `arcsinh(x / cofactor)` is a
@@ -192,6 +220,10 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
   but a small bootstrap is itself a noisy estimate of variability; it isn't
   a rigorous confidence interval, and could disagree with a larger/slower
   bootstrap run at full `fit_size`.
+- **The Marker Map page is always computed from the same 20,000-event
+  subsample as the rest of the app, never the full file** — consistent
+  with everything else here, but worth remembering if a population of
+  interest is rare enough that the subsample barely captures it.
 - **Fixed 90th/10th percentile split for control positive/negative
   populations** (`compensation/matrix.py:compute_spillover_row`) —
   reasonable default, but can misfire on a control with a small positive
