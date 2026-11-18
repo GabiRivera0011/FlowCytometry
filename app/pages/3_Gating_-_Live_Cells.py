@@ -17,8 +17,9 @@ from _gating_widgets import (
     render_section_gates,
 )
 from flowcyto.io.metadata import build_channel_metadata
+from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import dark_set3_color
-from flowcyto.viz.raw import build_gated_histogram_figure, build_gated_log_histogram_figure
+from flowcyto.viz.raw import build_gated_histogram_figure
 
 st.set_page_config(page_title="Gating - Live Cells — FlowCytometry", layout="wide")
 st.title("Gating — Live Cells")
@@ -45,6 +46,7 @@ workspace = require_sample()
 sample = workspace.sample
 
 st.caption(f"Current sample: **{sample.filename}** — {sample.event_count:,} events, {len(sample.pnn_labels)} channels.")
+st.caption("Fluorescence channels are displayed on an arcsinh transform, which spreads out the dim and negative events a linear scale would compress near zero. Forward/side scatter and Time remain linear.")
 
 REQUIRED_CHANNELS = ["FSC-A", "FSC-H", "SSC-A", "Time"]
 channel_index = {name: i for i, name in enumerate(sample.pnn_labels)}
@@ -72,8 +74,13 @@ else:
 
 
 def channel_values(channel: str) -> np.ndarray:
-    if compensated_fluor is not None and channel in fluor_channels:
-        return compensated_fluor[:, fluor_channels.index(channel)]
+    # Fluorescence channels are shown on an arcsinh display transform, not
+    # the raw linear scale — a linear axis compresses the dim/negative
+    # population into a sliver near zero. FSC/SSC/Time (not in
+    # `fluor_channels`) stay linear, which is standard for scatter channels.
+    if channel in fluor_channels:
+        raw = compensated_fluor[:, fluor_channels.index(channel)] if compensated_fluor is not None else plot_values[:, channel_index[channel]]
+        return arcsinh_transform(raw)
     return plot_values[:, channel_index[channel]]
 
 
@@ -99,7 +106,8 @@ with st.container(key="gate_card_acquisition", border=True):
         _persist_value("acq_channel", acq_channel)
         incoming = int(keep_mask.sum())
         acq_names, acq_colors, acq_masks, acq_refs = render_section_gates(
-            "acquisition", keep_mask, "Time", acq_channel, channel_values("Time"), channel_values(acq_channel), color_offset=0,
+            "acquisition", keep_mask, "Time", acq_channel, channel_values("Time"), channel_values(acq_channel),
+            color_offset=0, subsample_full_indices=plot_idx,
         )
         acq_gates = (acq_names, acq_colors, acq_masks)
     else:
@@ -120,7 +128,8 @@ with st.container(key="gate_card_debris", border=True):
         incoming = int(keep_mask.sum())
         pre_gate_idx = np.flatnonzero(keep_mask)
         debris_names, debris_colors, debris_masks, debris_refs = render_section_gates(
-            "debris", keep_mask, "FSC-A", "SSC-A", channel_values("FSC-A"), channel_values("SSC-A"), color_offset=1,
+            "debris", keep_mask, "FSC-A", "SSC-A", channel_values("FSC-A"), channel_values("SSC-A"),
+            color_offset=1, subsample_full_indices=plot_idx,
         )
         debris_gates = (debris_names, debris_colors, debris_masks)
         if len(pre_gate_idx) > 0:
@@ -150,7 +159,8 @@ with st.container(key="gate_card_singlets", border=True):
     if "FSC-A" in channel_index and "FSC-H" in channel_index:
         incoming = int(keep_mask.sum())
         singlets_names, singlets_colors, singlets_masks, singlets_refs = render_section_gates(
-            "singlets", keep_mask, "FSC-A", "FSC-H", channel_values("FSC-A"), channel_values("FSC-H"), color_offset=2,
+            "singlets", keep_mask, "FSC-A", "FSC-H", channel_values("FSC-A"), channel_values("FSC-H"),
+            color_offset=2, subsample_full_indices=plot_idx,
         )
         singlets_gates = (singlets_names, singlets_colors, singlets_masks)
     else:
@@ -174,25 +184,19 @@ with st.container(key="gate_card_live", border=True):
         incoming = int(keep_mask.sum())
         pre_gate_idx = np.flatnonzero(keep_mask)
         live_names, live_colors, live_masks, live_refs = render_section_gates(
-            "live", keep_mask, "SSC-A", viability_channel, channel_values("SSC-A"), channel_values(viability_channel), color_offset=3,
+            "live", keep_mask, "SSC-A", viability_channel, channel_values("SSC-A"), channel_values(viability_channel),
+            color_offset=3, subsample_full_indices=plot_idx,
         )
         live_gates = (live_names, live_colors, live_masks)
         if len(pre_gate_idx) > 0:
             gated_idx = np.flatnonzero(_union_masks(live_gates[2]))
             all_viability = channel_values(viability_channel)[pre_gate_idx]
             gated_viability = channel_values(viability_channel)[gated_idx]
-            st.caption(f"{viability_channel} distribution (linear and logarithmic scale) for the full incoming population, with the gate(s) defined above highlighted.")
-            hist_col1, hist_col2 = st.columns(2)
-            with hist_col1:
-                st.plotly_chart(
-                    build_gated_histogram_figure(all_viability, gated_viability, viability_channel, dark_set3_color(3)),
-                    width="stretch",
-                )
-            with hist_col2:
-                st.plotly_chart(
-                    build_gated_log_histogram_figure(all_viability, gated_viability, viability_channel, dark_set3_color(3)),
-                    width="stretch",
-                )
+            st.caption(f"{viability_channel} distribution (arcsinh scale) for the full incoming population, with the gate(s) defined above highlighted.")
+            st.plotly_chart(
+                build_gated_histogram_figure(all_viability, gated_viability, viability_channel, dark_set3_color(3)),
+                width="stretch",
+            )
     else:
         st.caption("No SSC-A channel is present in this file; this step has been omitted.")
         incoming = int(keep_mask.sum())

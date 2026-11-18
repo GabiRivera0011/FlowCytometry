@@ -7,6 +7,7 @@ ensure_src_on_path()
 
 from _gating_widgets import GATING_WIDGET_CSS, _persist_value, _persisted_default, render_section_gates
 from flowcyto.io.metadata import build_channel_metadata
+from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import dark_set3_color
 from flowcyto.viz.lineage import build_live_split_diagram
 
@@ -51,8 +52,11 @@ else:
 
 
 def channel_values(channel: str) -> np.ndarray:
-    if compensated_fluor is not None and channel in fluor_channels:
-        return compensated_fluor[:, fluor_channels.index(channel)]
+    # Fluorescence channels are shown on an arcsinh display transform, not
+    # the raw linear scale — see Gating — Live Cells for the full rationale.
+    if channel in fluor_channels:
+        raw = compensated_fluor[:, fluor_channels.index(channel)] if compensated_fluor is not None else plot_values[:, channel_index[channel]]
+        return arcsinh_transform(raw)
     return plot_values[:, channel_index[channel]]
 
 
@@ -69,6 +73,7 @@ else:
     live_mask_ref = ("full",)
     incoming = int(live_mask.sum())
     st.info("No Live cells gate has been defined yet; the full subsampled population is shown instead. Visit **Gating — Live Cells** first for a cleaner starting point.")
+st.caption("Fluorescence channels are displayed on an arcsinh transform; forward/side scatter remain linear.")
 st.session_state["incoming_ref_lymphocytes"] = live_mask_ref
 st.session_state["incoming_ref_myeloid"] = live_mask_ref
 
@@ -123,14 +128,16 @@ with st.container(key="gate_card_lymphocytes", border=True):
     st.subheader("Lymphocytes")
     lymph_x, lymph_y = render_axis_pickers("lymph")
     lymph_names, lymph_colors, lymph_masks, lymph_refs = render_section_gates(
-        "lymphocytes", live_mask, lymph_x, lymph_y, channel_values(lymph_x), channel_values(lymph_y), color_offset=0,
+        "lymphocytes", live_mask, lymph_x, lymph_y, channel_values(lymph_x), channel_values(lymph_y),
+        color_offset=0, subsample_full_indices=plot_idx,
     )
 
 with st.container(key="gate_card_myeloid", border=True):
     st.subheader("Myeloid cells")
     myeloid_x, myeloid_y = render_axis_pickers("myeloid")
     myeloid_names, myeloid_colors, myeloid_masks, myeloid_refs = render_section_gates(
-        "myeloid", live_mask, myeloid_x, myeloid_y, channel_values(myeloid_x), channel_values(myeloid_y), color_offset=2,
+        "myeloid", live_mask, myeloid_x, myeloid_y, channel_values(myeloid_x), channel_values(myeloid_y),
+        color_offset=2, subsample_full_indices=plot_idx,
     )
 
 lymph_label = lymph_names[0] if lymph_names else "Lymphocytes"

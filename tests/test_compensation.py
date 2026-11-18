@@ -2,7 +2,14 @@ from pathlib import Path
 
 import numpy as np
 
-from flowcyto.compensation.diagnostics import pick_default_scenario, score_scenario, slope_matrix
+from flowcyto.compensation.diagnostics import (
+    pct_negative_slope,
+    pick_default_scenario,
+    scenarios_are_close,
+    score_scenario,
+    slope_matrix,
+    slope_matrix_with_ci,
+)
 from flowcyto.compensation.matrix import apply_matrix_pct_negative, build_control_matrix, fluorescence_indices
 from flowcyto.io.fcs import load_fcs
 
@@ -76,3 +83,48 @@ def test_pick_default_scenario_returns_lowest_score():
     bad_scenario = score_scenario(raw_values, fluor_channels, "bad", worse, "", fit_size=100)
 
     assert pick_default_scenario([good_scenario, bad_scenario]).name == "good"
+    # the absurd coefficient's effect is large relative to fit noise
+    assert not scenarios_are_close(good_scenario, bad_scenario)
+
+
+def test_slope_matrix_with_ci_upper_bound_never_below_the_slope():
+    sample, _ = _load_sample_and_controls()
+    fluor_idx = fluorescence_indices(sample)
+    fluor_channels = [sample.pnn_labels[i] for i in fluor_idx]
+    raw_values = sample.raw_values[:, fluor_idx]
+
+    slopes, ci_upper = slope_matrix_with_ci(raw_values, fluor_channels, fit_size=100, sample_size=2000)
+    off_diag = ~np.eye(len(fluor_channels), dtype=bool)
+    assert (ci_upper.values[off_diag] >= slopes.values[off_diag]).all()
+
+
+def test_pct_negative_slope_with_ci_is_stricter_than_point_estimate():
+    import pandas as pd
+
+    names = ["A", "B", "C"]
+    # every off-diagonal slope is a small negative number...
+    slopes = pd.DataFrame([[0, -0.01, -0.01], [-0.01, 0, -0.01], [-0.01, -0.01, 0]], index=names, columns=names)
+    # ...but the confidence interval's upper bound is still positive for
+    # most pairs — i.e. "negative" here is noise, not a significant effect.
+    ci_upper = pd.DataFrame([[0, 0.02, -0.005], [0.02, 0, 0.02], [-0.005, 0.02, 0]], index=names, columns=names)
+
+    point_estimate_pct = pct_negative_slope(slopes)
+    significance_pct = pct_negative_slope(slopes, ci_upper)
+
+    assert (point_estimate_pct == 100.0).all()  # every pair looks negative at face value
+    assert (significance_pct < point_estimate_pct).all()  # the CI check is strictly more conservative here
+
+
+def test_scenarios_are_close_true_for_near_identical_scores():
+    import pandas as pd
+
+    from flowcyto.compensation.diagnostics import ScenarioScore
+
+    identity = pd.DataFrame(np.eye(2))
+    per_channel = np.array([10.0, 12.0])
+    a = ScenarioScore(name="a", matrix=identity, score=11.0, detail="", pct_negative_per_channel=per_channel)
+    b = ScenarioScore(name="b", matrix=identity, score=11.3, detail="", pct_negative_per_channel=per_channel)
+    c = ScenarioScore(name="c", matrix=identity, score=95.0, detail="", pct_negative_per_channel=np.array([95.0, 95.0]))
+
+    assert scenarios_are_close(a, b)
+    assert not scenarios_are_close(a, c)

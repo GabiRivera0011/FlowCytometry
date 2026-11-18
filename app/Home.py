@@ -49,18 +49,18 @@ col4, col5, col6 = st.columns(3)
 
 with col4:
     st.subheader("4. Gating — Broad Cellular Lineage")
-    st.write("Split live cells into lymphocytes vs. myeloid cells, then lineage-positive vs. HLA-DR+ antigen-presenting cells.")
+    st.write("Split live cells into lymphocytes vs. myeloid cells.")
     st.page_link("pages/4_Gating_-_Broad_Cellular_Lineage.py", label="Open →")
 
 with col5:
     st.subheader("5. Gating — Subset Cell Population")
-    st.write("Separate monocytes from dendritic cells, then explore cDC1/cDC2/pDC subsets among the dendritic cells.")
+    st.write("Define custom gating workspaces for further rounds of subsetting, branching from any earlier gate as needed.")
     st.page_link("pages/5_Gating_-_Subset_Cell_Population.py", label="Open →")
 
 with col6:
-    st.subheader("6. Gating — Tabulation")
+    st.subheader("6. Gating Summary")
     st.write("View every gate defined across the gating pages in a single table, including event counts, percentage of subsample, percentage of Live cells, and exact counts in the full file.")
-    st.page_link("pages/6_Gating_-_Tabulation.py", label="Open →")
+    st.page_link("pages/6_Gating_Summary.py", label="Open →")
 
 st.divider()
 

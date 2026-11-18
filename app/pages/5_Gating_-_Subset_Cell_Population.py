@@ -15,6 +15,7 @@ from _gating_widgets import (
     render_section_gates,
 )
 from flowcyto.io.metadata import build_channel_metadata
+from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import dark_set3_color
 
 st.set_page_config(page_title="Gating - Subset Cell Population — FlowCytometry", layout="wide")
@@ -58,8 +59,11 @@ else:
 
 
 def channel_values(channel: str) -> np.ndarray:
-    if compensated_fluor is not None and channel in fluor_channels:
-        return compensated_fluor[:, fluor_channels.index(channel)]
+    # Fluorescence channels are shown on an arcsinh display transform, not
+    # the raw linear scale — see Gating — Live Cells for the full rationale.
+    if channel in fluor_channels:
+        raw = compensated_fluor[:, fluor_channels.index(channel)] if compensated_fluor is not None else plot_values[:, channel_index[channel]]
+        return arcsinh_transform(raw)
     return plot_values[:, channel_index[channel]]
 
 
@@ -81,6 +85,7 @@ st.caption(
     "of plots may be added; each plot allows selection of any two channels and may be gated using boxes, lassos, "
     "points, or quadrants, consistent with the earlier gating pages."
 )
+st.caption("Fluorescence channels are displayed on an arcsinh transform; forward/side scatter remain linear.")
 
 channel_options = list(sample.pnn_labels)
 default_x = "FSC-A" if "FSC-A" in channel_options else channel_options[0]
@@ -253,7 +258,8 @@ for idx, plot_id in enumerate(plot_ids):
             _persist_value(y_key, y_channel)
 
         names, colors, masks, refs = render_section_gates(
-            section, incoming_mask, x_channel, y_channel, channel_values(x_channel), channel_values(y_channel), color_offset=(idx * 2) % 6,
+            section, incoming_mask, x_channel, y_channel, channel_values(x_channel), channel_values(y_channel),
+            color_offset=(idx * 2) % 6, subsample_full_indices=plot_idx,
         )
         extend_registry(registry, title, (names, colors, masks), refs)
         previous_title = title
@@ -282,5 +288,5 @@ with back_col:
     if st.button("← Back: Broad Cellular Lineage", width="stretch"):
         st.switch_page("pages/4_Gating_-_Broad_Cellular_Lineage.py")
 with next_col:
-    if st.button("Next: Tabulation →", width="stretch", type="primary", key="next_button"):
-        st.switch_page("pages/6_Gating_-_Tabulation.py")
+    if st.button("Next: Gating Summary →", width="stretch", type="primary", key="next_button"):
+        st.switch_page("pages/6_Gating_Summary.py")

@@ -11,10 +11,12 @@ from flowcyto.compensation.diagnostics import (
     pick_default_scenario,
     run_slope_diagnostic,
     run_validated_search,
+    scenarios_are_close,
     score_scenario,
 )
 from flowcyto.compensation.matrix import apply_matrix_pct_negative, build_control_matrix, read_spill_metadata
 from flowcyto.io.metadata import build_channel_metadata
+from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import build_before_after_bar, build_ranked_bar
 from flowcyto.viz.heatmap import build_slope_heatmap, build_spillover_heatmap
 from flowcyto.viz.pairs import build_notable_pairs_grid, build_pair_detail_figure, rank_notable_pairs
@@ -109,6 +111,13 @@ if best.score < 5:
     st.success(f"Displaying **{best.name}**: {best.detail} ({score_lines})")
 else:
     st.warning(f"Displaying **{best.name}**: {best.detail} ({score_lines})")
+
+runner_up = min((s for s in scenarios if s is not best), key=lambda s: s.score, default=None)
+if runner_up is not None and scenarios_are_close(best, runner_up):
+    st.caption(
+        f"Note: **{best.name}**'s score is not clearly better than **{runner_up.name}**'s — the gap is within "
+        "the noise of the random fit subsample, so either is a reasonable starting point."
+    )
 
 if workspace.uncontrolled_channels:
     st.caption(
@@ -208,8 +217,12 @@ if workspace.last_diagnostic is not None:
     )
 
 st.subheader("Notable channel pairs")
+st.caption("Channels below are displayed on an arcsinh transform, which spreads out the dim/negative events a linear scale would compress near zero.")
 grid_idx = workspace.plot_subsample_indices if workspace.plot_subsample_indices is not None else np.arange(min(5000, len(raw_values)))
-compensated_subsample = raw_values[grid_idx] @ np.linalg.inv(current_matrix.values)
+# Display-only transform: the diagnostics/scoring above intentionally stay
+# on raw linear values (standard practice for fitting a compensation
+# matrix) — only this and the pair-detail plot below are transformed.
+compensated_subsample = arcsinh_transform(raw_values[grid_idx] @ np.linalg.inv(current_matrix.values))
 grid_pairs = rank_notable_pairs(ranking_source, top_k=12)
 grid_fig = build_notable_pairs_grid(compensated_subsample, fluor_channels, grid_pairs)
 grid_event = st.plotly_chart(grid_fig, width="stretch", on_select="rerun", key="pairs_grid")

@@ -132,6 +132,16 @@ def resolve_full_mask(ref, channel_fn, n_full: int, cache: dict) -> np.ndarray:
             # its incoming population through unmodified, same as the
             # subsample side does.
             result = incoming_full
+        elif shape.get("type") == "points" and "full_indices" in shape:
+            # Point gates are resolved by their original full-file event
+            # indices (captured when the gate was drawn), not by replaying
+            # x/y coordinates against the full dataset: raw channel values
+            # are often quantized, so an exact coordinate match against ~2M
+            # events can hit far more than the one event actually clicked in
+            # the 20k-event subsample. Index identity has no such ambiguity.
+            result = np.zeros(n_full, dtype=bool)
+            result[shape["full_indices"]] = True
+            result &= incoming_full
         else:
             x_full, y_full = channel_fn(x_label), channel_fn(y_label)
             result = _mask_from_shape(shape, x_full, y_full) & incoming_full
@@ -334,6 +344,7 @@ def _union_masks(masks: list[np.ndarray]) -> np.ndarray:
 def render_section_gates(
     section: str, incoming_mask: np.ndarray, x_label: str, y_label: str,
     x_values: np.ndarray, y_values: np.ndarray, color_offset: int,
+    subsample_full_indices: np.ndarray | None = None,
 ) -> tuple[list[str], list[str], list[np.ndarray], list[tuple]]:
     """Every gate in a section lives on ONE shared plot: a picker chooses
     which gate a new box/lasso selection edits, and every gate already
@@ -341,7 +352,13 @@ def render_section_gates(
     figure — adding a gate never opens a second plot. Returns the section's
     (names, colors, masks, refs) — refs are `("gate", section, index)`
     pointers `resolve_full_mask` uses to replay a gate's exact boundary
-    against the full dataset later, on the Tabulation page.
+    against the full dataset later, on the Gating Summary page.
+
+    `subsample_full_indices` (the page's `workspace.plot_subsample_indices`)
+    lets a Point gate record which full-file event each clicked point
+    actually is, so `resolve_full_mask` can resolve it by exact index
+    identity rather than by re-matching coordinates against the full
+    dataset — see the "points" branch below.
     """
     count_key = f"n_gates_{section}"
     n_gates = st.session_state.get(count_key, 1)
@@ -380,49 +397,42 @@ def render_section_gates(
         if restored == "new" or (isinstance(restored, int) and restored < n_gates):
             st.session_state[active_key] = restored
 
-    ctrl_col0, ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.2, 1.2, 0.9, 1.2])
+    # Columns are created in the order rows should appear vertically; the
+    # Axis zoom/Editing/Name row is created first so it renders above the
+    # Gate shape/View row, even though Gate shape is filled in first below
+    # (Name the gate's default depends on gate_shape).
+    zoom_col, editing_col, name_col = st.columns([1, 0.9, 1.2])
+    ctrl_col0, ctrl_col1 = st.columns([1.2, 1.2])
+
     with ctrl_col0:
-        # `segmented_control` deselects (returns None) if you click the
-        # already-active option again — fall back to Freeform rather than
-        # crashing on the dict lookups below, same defensive shape as the
-        # View control's `.get(view, "dot")` just underneath.
-        gate_shape = st.segmented_control(
-            "Gate shape", ["Freeform", "Point", "Quadrant"],
-            default=_persisted_default(f"gate_shape_{section}", "Freeform"), key=f"gate_shape_{section}",
-        ) or "Freeform"
-        _persist_value(f"gate_shape_{section}", gate_shape)
-    with ctrl_col1:
         view = st.segmented_control(
             "View", ["Dot plot", "Pseudocolor", "Contour", "Zebra"],
             default=_persisted_default(f"view_mode_{section}", "Dot plot"), key=f"view_mode_{section}",
+            help="Switch to Pseudocolor or Contour before drawing a gate on a sparse population: density-based "
+            "rendering shows the cluster's true shape better than a raw dot plot at 20,000 points.",
         )
         if view is not None:
             _persist_value(f"view_mode_{section}", view)
     mode = {"Pseudocolor": "pseudocolor", "Contour": "contour", "Zebra": "zebra"}.get(view, "dot")
 
-    with ctrl_col2:
-        options = list(range(n_gates)) + ["new"]
-        active = st.selectbox(
-            "Editing", options, index=0,
-            format_func=lambda v: "+ New gate" if v == "new" else names[v],
-            key=active_key,
-        )
-        _persist_value(active_key, active)
-    active_idx = n_gates if active == "new" else active
+    with ctrl_col1:
+        # `segmented_control` deselects (returns None) if you click the
+        # already-active option again — fall back to Freeform rather than
+        # crashing on the dict lookups below, same defensive shape as the
+        # View control's `.get(view, "dot")` just above.
+        shape_hints = {
+            "Freeform": "Drag to draw a rectangular gate, or select the lasso tool from the plot toolbar to draw a freeform boundary.",
+            "Point": "Click individual points to select them. Hold Shift while clicking to add further points; a plain click replaces the current selection.",
+            "Quadrant": "Click once to place a crosshair, creating four gates simultaneously (upper-right, upper-left, lower-left, lower-right), named using the field above.",
+        }
+        pre_shape = st.session_state.get(f"gate_shape_{section}") or _persisted_default(f"gate_shape_{section}", "Freeform")
+        gate_shape = st.segmented_control(
+            "Gate shape", ["Freeform", "Point", "Quadrant"],
+            default=_persisted_default(f"gate_shape_{section}", "Freeform"), key=f"gate_shape_{section}",
+            help=shape_hints.get(pre_shape, shape_hints["Freeform"]),
+        ) or "Freeform"
+        _persist_value(f"gate_shape_{section}", gate_shape)
 
-    with ctrl_col3:
-        if active == "new" and gate_shape == "Quadrant":
-            default_name = "Quadrant"
-        else:
-            default_name = names[active_idx] if active_idx < n_gates else f"Gate {n_gates + 1}"
-        typed_name = st.text_input("Name this gate", value=default_name, key=f"gate_{section}_{active_idx}_nameinput")
-
-    shape_hint = {
-        "Freeform": "Drag to draw a rectangular gate, or select the lasso tool from the plot toolbar to draw a freeform boundary.",
-        "Point": "Click individual points to select them. Hold Shift while clicking to add further points; a plain click replaces the current selection.",
-        "Quadrant": "Click once to place a crosshair, creating four gates simultaneously (upper-right, upper-left, lower-left, lower-right), named using the field above.",
-    }[gate_shape]
-    zoom_col, hint_col = st.columns([1, 2.5])
     with zoom_col:
         zoom_options = list(AXIS_ZOOM_OPTIONS.keys())
         zoom_choice = st.selectbox(
@@ -432,9 +442,24 @@ def render_section_gates(
             help="Zooming or scrolling directly on the plot does not persist, as Plotly resets the view on every gate edit. Use this control instead to view outlier events beyond the default range; the selection is preserved.",
         )
         _persist_value(f"axis_zoom_{section}", zoom_choice)
-    with hint_col:
-        st.caption(shape_hint)
     pct_range = AXIS_ZOOM_OPTIONS[zoom_choice]
+
+    with editing_col:
+        options = list(range(n_gates)) + ["new"]
+        active = st.selectbox(
+            "Editing", options, index=0,
+            format_func=lambda v: "+ New gate" if v == "new" else names[v],
+            key=active_key,
+        )
+        _persist_value(active_key, active)
+    active_idx = n_gates if active == "new" else active
+
+    with name_col:
+        if active == "new" and gate_shape == "Quadrant":
+            default_name = "Quadrant"
+        else:
+            default_name = names[active_idx] if active_idx < n_gates else f"Gate {n_gates + 1}"
+        typed_name = st.text_input("Name the gate", value=default_name, key=f"gate_{section}_{active_idx}_nameinput")
 
     x_visible, y_visible = x_values[visible_idx], y_values[visible_idx]
     base_color = dark_set3_color(color_offset)
@@ -517,7 +542,16 @@ def render_section_gates(
             gated_mask = np.zeros(len(incoming_mask), dtype=bool)
             gated_mask[visible_idx[selection_mask]] = True
             st.session_state[f"gate_{section}_{active_idx}_mask"] = gated_mask
-            st.session_state[f"gate_{section}_{active_idx}_shape"] = _geometry_from_selection(event.selection)
+            new_shape = _geometry_from_selection(event.selection)
+            if new_shape is not None and new_shape.get("type") == "points" and subsample_full_indices is not None:
+                # Record each clicked point's actual full-file event index —
+                # reusing `selection_mask`/`visible_idx` (already computed
+                # above for `gated_mask`), not a coordinate re-match — so a
+                # full-dataset resolution later can find exactly the right
+                # event(s), even if other full-file events happen to share
+                # the same (quantized) channel values.
+                new_shape["full_indices"] = subsample_full_indices[visible_idx[selection_mask]].tolist()
+            st.session_state[f"gate_{section}_{active_idx}_shape"] = new_shape
             st.session_state[f"gate_{section}_{active_idx}_name"] = typed_name
             if active_idx == n_gates:
                 st.session_state[count_key] = n_gates + 1
