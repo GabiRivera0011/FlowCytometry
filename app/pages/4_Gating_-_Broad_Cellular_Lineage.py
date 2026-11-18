@@ -5,8 +5,9 @@ from _common import ensure_src_on_path, require_sample
 
 ensure_src_on_path()
 
-from _gating_widgets import GATING_WIDGET_CSS, _persist_value, _persisted_default, render_section_gates, transform_channel
+from _gating_widgets import GATING_WIDGET_CSS, _persist_value, _persisted_default, render_section_gates
 from flowcyto.io.metadata import build_channel_metadata
+from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import dark_set3_color
 from flowcyto.viz.lineage import build_live_split_diagram
 
@@ -51,11 +52,11 @@ else:
 
 
 def channel_values(channel: str) -> np.ndarray:
-    # Fluorescence channels are shown on a Logicle display transform, not
+    # Fluorescence channels are shown on an arcsinh display transform, not
     # the raw linear scale — see Gating — Live Cells for the full rationale.
     if channel in fluor_channels:
         raw = compensated_fluor[:, fluor_channels.index(channel)] if compensated_fluor is not None else plot_values[:, channel_index[channel]]
-        return transform_channel(workspace, channel, raw, fluor_channels)
+        return arcsinh_transform(raw)
     return plot_values[:, channel_index[channel]]
 
 
@@ -72,7 +73,7 @@ else:
     live_mask_ref = ("full",)
     incoming = int(live_mask.sum())
     st.info("No Live cells gate has been defined yet; the full subsampled population is shown instead. Visit **Gating — Live Cells** first for a cleaner starting point.")
-st.caption("Fluorescence channels are displayed on a Logicle transform; forward/side scatter remain linear.")
+st.caption("Fluorescence channels are displayed on an arcsinh transform; forward/side scatter remain linear.")
 st.session_state["incoming_ref_lymphocytes"] = live_mask_ref
 st.session_state["incoming_ref_myeloid"] = live_mask_ref
 

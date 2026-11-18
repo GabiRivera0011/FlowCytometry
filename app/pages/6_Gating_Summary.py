@@ -6,7 +6,8 @@ from _common import ensure_src_on_path, require_sample
 
 ensure_src_on_path()
 
-from _gating_widgets import collect_section_gates, resolve_full_mask, transform_channel
+from _gating_widgets import collect_section_gates, resolve_full_mask
+from flowcyto.transforms import arcsinh_transform
 
 st.set_page_config(page_title="Gating Summary — FlowCytometry", layout="wide")
 st.title("Gating Summary")
@@ -45,15 +46,13 @@ else:
 
 
 def full_channel_values(channel: str) -> np.ndarray:
-    # `transform_channel` reuses the SAME cached (T, W, M, A) Logicle
-    # parameters the gating pages already computed for this channel — a
-    # gate's saved boundary was drawn in that exact transformed space, so
-    # resolving it against the full file has to replay the same scale, not
-    # freshly re-estimated parameters (which could differ slightly from the
-    # subsample-derived ones the gate was actually drawn against).
+    # Must match the gating pages' own `channel_values` transform exactly —
+    # a gate's saved boundary was drawn in arcsinh-transformed coordinates
+    # for fluorescence channels, so resolving it against the full file has
+    # to test in that same transformed space, not raw linear units.
     if channel in fluor_channels:
         raw = full_fluor[:, fluor_channels.index(channel)] if full_fluor is not None else sample.raw_values[:, channel_index[channel]]
-        return transform_channel(workspace, channel, raw, fluor_channels)
+        return arcsinh_transform(raw)
     return sample.raw_values[:, channel_index[channel]]
 
 

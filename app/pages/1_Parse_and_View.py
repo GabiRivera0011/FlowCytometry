@@ -89,7 +89,6 @@ if sample_source is not None:
         workspace.spillover_matrix = None
         workspace.default_scenario = None
         workspace.last_diagnostic = None
-        workspace.transforms = None  # new sample — cached Logicle params no longer apply
 
 control_sources = list(control_uploads) if control_uploads else (bundled_controls if use_bundled_controls else [])
 control_hashes = tuple(sorted(_content_hash(c) for c in control_sources))
@@ -98,7 +97,6 @@ if st.session_state.get("_last_control_hashes") != control_hashes:
     workspace.spillover_matrix = None  # controls changed — force a scenario re-comparison
     workspace.default_scenario = None
     workspace.last_diagnostic = None
-    workspace.transforms = None  # compensation is about to change — cached Logicle params no longer apply
 
 if control_sources:
     loaded_controls = []
