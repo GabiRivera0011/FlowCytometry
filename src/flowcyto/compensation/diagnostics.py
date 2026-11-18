@@ -126,35 +126,39 @@ class ScenarioScore:
     matrix: pd.DataFrame
     score: float  # mean % of pairs with a significantly negative slope after applying this matrix — lower is better
     detail: str
-    pct_negative_per_channel: np.ndarray
-
-    @property
-    def score_se(self) -> float:
-        """Approximate standard error of `score`, in percentage points.
-        Each channel's flagged-pair fraction is treated as a binomial
-        proportion over its (n_channels - 1) incoming pairs; averaging their
-        variances across channels gives a heuristic (not exact — channels
-        aren't fully independent) standard error on the overall mean score.
-        Used to judge whether two scenarios' scores are meaningfully
-        different, or just noise from the random fit subsample."""
-        p = self.pct_negative_per_channel / 100
-        n_channels = len(p)
-        if n_channels == 0:
-            return 0.0
-        n_pairs = max(n_channels - 1, 1)
-        mean_channel_variance = float(np.mean(p * (1 - p) / n_pairs))
-        return float(np.sqrt(mean_channel_variance / n_channels) * 100)
+    score_se: float  # empirical (bootstrap) standard error of `score`, in percentage points
 
 
-def score_scenario(raw_values: np.ndarray, channel_names: list[str], name: str, matrix: pd.DataFrame, detail: str, fit_size: int = 400) -> ScenarioScore:
+def score_scenario(
+    raw_values: np.ndarray, channel_names: list[str], name: str, matrix: pd.DataFrame, detail: str,
+    fit_size: int = 400, n_bootstrap: int = 3, bootstrap_fit_size: int | None = None,
+) -> ScenarioScore:
     """Quick-tier score (fit_size=400, ~2-3s) for comparing candidate matrices
     on page load — the full fit_size=1200 diagnostic is reserved for the
-    explicit 'Run full diagnostic' action, not scenario selection."""
-    result = run_slope_diagnostic(raw_values, channel_names, matrix, fit_size=fit_size)
-    return ScenarioScore(
-        name=name, matrix=matrix, score=result.mean_pct_negative, detail=detail,
-        pct_negative_per_channel=result.pct_negative_per_channel,
-    )
+    explicit 'Run full diagnostic' action, not scenario selection.
+
+    `score_se` is an EMPIRICAL standard error, not an analytic one: the same
+    diagnostic is re-run `n_bootstrap` times with different random seeds (at
+    a smaller `bootstrap_fit_size`, to keep the added cost modest) and the
+    spread of the resulting scores is used directly. A per-channel
+    independence assumption (treating each channel's flagged-pair fraction
+    as an independent binomial proportion) would understate the true
+    variability: every target channel in one source channel's row is fit
+    from the *same* sampled/dim-gated events, so their "negative or not"
+    outcomes are correlated, not independent. Resampling the whole procedure
+    captures that correlation automatically, without needing to model it."""
+    compensated = raw_values @ np.linalg.inv(matrix.values)
+    slopes, ci_upper = slope_matrix_with_ci(compensated, channel_names, fit_size=fit_size, seed=1)
+    score = float(np.mean(pct_negative_slope(slopes, ci_upper)))
+
+    boot_fit_size = bootstrap_fit_size or max(fit_size // 2, 100)
+    bootstrap_scores = []
+    for seed in range(2, n_bootstrap + 2):  # seed=1 is the main run above; bootstrap seeds stay distinct from it
+        boot_slopes, boot_ci = slope_matrix_with_ci(compensated, channel_names, fit_size=boot_fit_size, seed=seed)
+        bootstrap_scores.append(float(np.mean(pct_negative_slope(boot_slopes, boot_ci))))
+    score_se = float(np.std(bootstrap_scores, ddof=1)) if len(bootstrap_scores) > 1 else 0.0
+
+    return ScenarioScore(name=name, matrix=matrix, score=score, detail=detail, score_se=score_se)
 
 
 def scenarios_are_close(a: ScenarioScore, b: ScenarioScore, n_se: float = 2.0) -> bool:

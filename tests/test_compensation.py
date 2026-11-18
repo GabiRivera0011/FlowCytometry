@@ -79,12 +79,38 @@ def test_pick_default_scenario_returns_lowest_score():
     worse = identity.copy()
     worse.iloc[0, 1] = 5.0  # an absurd coefficient guaranteed to score worse
 
-    good_scenario = score_scenario(raw_values, fluor_channels, "good", identity, "", fit_size=100)
-    bad_scenario = score_scenario(raw_values, fluor_channels, "bad", worse, "", fit_size=100)
+    # fit_size=100 is too small for the bootstrap SE itself to be stable
+    # enough to tell "good" and "bad" apart here — 200 keeps the test fast
+    # while giving `scenarios_are_close` a reliable signal to work with.
+    good_scenario = score_scenario(raw_values, fluor_channels, "good", identity, "", fit_size=200)
+    bad_scenario = score_scenario(raw_values, fluor_channels, "bad", worse, "", fit_size=200)
 
     assert pick_default_scenario([good_scenario, bad_scenario]).name == "good"
     # the absurd coefficient's effect is large relative to fit noise
     assert not scenarios_are_close(good_scenario, bad_scenario)
+
+
+def test_score_se_is_a_nonzero_empirical_bootstrap_not_a_fixed_formula():
+    sample, controls = _load_sample_and_controls()
+    fluor_idx = fluorescence_indices(sample)
+    fluor_channels = [sample.pnn_labels[i] for i in fluor_idx]
+    raw_values = sample.raw_values[:, fluor_idx]
+
+    import pandas as pd
+
+    identity = pd.DataFrame(np.eye(len(fluor_channels)), index=fluor_channels, columns=fluor_channels)
+
+    scenario = score_scenario(raw_values, fluor_channels, "id", identity, "", fit_size=150, n_bootstrap=4)
+    assert scenario.score_se > 0.0
+
+    # more bootstrap reps shouldn't change the *expected* SE much, but the
+    # value itself comes from resampling, not a closed-form expression of
+    # `score` alone — two different scenarios tied on `score` can still get
+    # different `score_se` values.
+    worse = identity.copy()
+    worse.iloc[2, 5] = 1.3
+    scenario_b = score_scenario(raw_values, fluor_channels, "b", worse, "", fit_size=150, n_bootstrap=4)
+    assert scenario.score_se != scenario_b.score_se or scenario.score != scenario_b.score
 
 
 def test_slope_matrix_with_ci_upper_bound_never_below_the_slope():
@@ -121,10 +147,9 @@ def test_scenarios_are_close_true_for_near_identical_scores():
     from flowcyto.compensation.diagnostics import ScenarioScore
 
     identity = pd.DataFrame(np.eye(2))
-    per_channel = np.array([10.0, 12.0])
-    a = ScenarioScore(name="a", matrix=identity, score=11.0, detail="", pct_negative_per_channel=per_channel)
-    b = ScenarioScore(name="b", matrix=identity, score=11.3, detail="", pct_negative_per_channel=per_channel)
-    c = ScenarioScore(name="c", matrix=identity, score=95.0, detail="", pct_negative_per_channel=np.array([95.0, 95.0]))
+    a = ScenarioScore(name="a", matrix=identity, score=11.0, detail="", score_se=0.5)
+    b = ScenarioScore(name="b", matrix=identity, score=11.3, detail="", score_se=0.5)
+    c = ScenarioScore(name="c", matrix=identity, score=95.0, detail="", score_se=0.5)
 
     assert scenarios_are_close(a, b)
     assert not scenarios_are_close(a, c)

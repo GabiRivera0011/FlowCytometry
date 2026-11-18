@@ -19,14 +19,14 @@ Core library              ▼
                          src/flowcyto/
                          ├── io            FCS/CSV parsing (FlowKit), metadata
                          ├── compensation  spillover matrix: controls, diagnostics, search
-                         ├── transforms    arcsinh display transform (fluorescence channels)
+                         ├── transforms    Logicle display transform (fluorescence channels)
                          └── viz           Plotly figure builders (scatter, bars, heatmap, pairs)
 ```
 
 Interactive gating itself is Streamlit-coupled (session_state, Plotly select
 events) and lives in `app/_gating_widgets.py` rather than `src/flowcyto` —
 see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the reasoning. Of the
-two modules planned early on, `transforms` now holds the arcsinh display
+two modules planned early on, `transforms` now holds the Logicle display
 transform (see *Statistical & math approach* below); `clustering` (PCA/UMAP
 + KMeans) is still an empty stub.
 
@@ -104,13 +104,18 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
   (already-compensated/identity, control-derived, automatic search) is
   scored with the same diagnostic (smaller `fit_size=400` for responsiveness
   on page load) and the minimum-score scenario is selected as the default.
-  `ScenarioScore.score_se` gives an approximate standard error (a binomial-
-  proportion heuristic over each channel's flagged-pair fraction — not an
-  exact propagation, since channels aren't fully independent, but enough to
-  catch "these aren't really different"); `scenarios_are_close` compares two
-  scenarios' scores against their combined SE, and the Compensation page
-  shows a note when the picked default isn't meaningfully better than the
-  runner-up.
+  `ScenarioScore.score_se` is an **empirical (bootstrap) standard error**:
+  the diagnostic is re-run a few times (`n_bootstrap=3`, at a smaller
+  `bootstrap_fit_size`) with different random seeds, and the spread of the
+  resulting scores is used directly — not a formula that assumes each
+  channel's flagged-pair fraction is independent. They aren't: every target
+  channel in one source channel's row is fit from the *same* sampled/
+  dim-gated events (`_fit_slope_matrix`'s `pick`), so an independence-based
+  standard error would understate the real variability. Resampling the
+  whole procedure captures that correlation automatically, without needing
+  to model it analytically. `scenarios_are_close` compares two scenarios'
+  scores against their combined SE, and the Compensation page shows a note
+  when the picked default isn't meaningfully better than the runner-up.
 - **Automatic (no-controls) search** (`diagnostics.py:run_validated_search`):
   greedily proposes a per-pair coefficient (bounded scalar minimization of
   % negative events, bounds `[0, 2]`) on a training sample, in random pair
@@ -124,24 +129,42 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
 - All interactive gating plots render from a **fixed 20,000-event random
   subsample** (`np.random.default_rng(0)`, seeded for reproducibility), for
   responsiveness — not the full file.
-- **Fluorescence channels are displayed on an arcsinh transform**
-  (`flowcyto.transforms.arcsinh_transform`, `x -> arcsinh(x / 150)`), applied
-  in every gating page's `channel_values` and in the Compensation page's
-  pair-detail/notable-pairs plots. A linear axis compresses the dim/negative
-  population into a sliver near zero and makes population separation
-  genuinely harder to judge; arcsinh (unlike plain log) handles zero and
-  negative values natively, which matters because compensated fluorescence
-  routinely has both. Forward/side scatter and Time stay linear, which is
-  standard for scatter channels. The compensation **matrix fit/diagnostics
-  themselves intentionally stay on raw linear values** — only display and
-  gating use the transform, matching standard practice (FlowJo/Cytobank
-  compute spillover on linear data but display and gate on a transformed
-  scale).
+- **Fluorescence channels are displayed on a Logicle transform**
+  (Parks, Moore & Herzenberg 2006; GatingML 2.0 spec; `flowcyto.transforms`,
+  via FlowKit's `LogicleTransform`), applied in every gating page's
+  `channel_values` and in the Compensation page's pair-detail/notable-pairs
+  plots. A linear axis compresses the dim/negative population into a sliver
+  near zero and makes population separation genuinely harder to judge;
+  Logicle (unlike plain log) handles zero and negative values natively,
+  which matters because compensated fluorescence routinely has both.
+  Forward/side scatter and Time stay linear, which is standard for scatter
+  channels. The compensation **matrix fit/diagnostics themselves
+  intentionally stay on raw linear values** — only display and gating use
+  the transform, matching standard practice (FlowJo/Cytobank compute
+  spillover on linear data but display and gate on a transformed scale).
+  - **Parameters are data-driven per channel**, not one fixed cofactor
+    shared by every channel (`estimate_logicle_params`): `T` (top of scale)
+    is the channel's own 99.9th percentile; `W` (the linear region's width,
+    in decades) follows the Logicle paper's relationship to the negative
+    population's spread (`W = (M - log10(T/|r|)) / 2`, `r` = 5th percentile
+    of the channel's negative values), so a channel with little negative
+    signal gets a narrower linear region than one with wide
+    compensation-driven negative spread. `M=4.5`, `A=0` are fixed, standard
+    defaults.
+  - **Parameters are estimated once per channel and cached**
+    (`workspace.transforms`, read/written by `app/_gating_widgets.py:
+    transform_channel`), not re-estimated on every plot — a gate is drawn
+    against one specific transformed scale, and resolving it against the
+    full dataset later has to replay that *exact* same scale, not a freshly
+    re-estimated one that could differ slightly. The cache is invalidated
+    (`workspace.transforms = None`) whenever what "compensated" means for a
+    channel changes: a new sample, new/changed controls, or an applied/reset
+    spillover matrix edit.
 - Each axis **autoscales to a central percentile band** of its own channel
   (default central 90%, adjustable via "Axis zoom" up to "All events"),
   rather than full min–max, so a few extreme outliers don't stretch the
   visible range past where the bulk of the data sits. This operates on
-  whichever scale (linear or arcsinh) the channel is already displayed on.
+  whichever scale (linear or Logicle) the channel is already displayed on.
 - Four gate shapes — box, lasso (point-in-polygon via vectorized even-odd
   ray casting), point-click, and quadrant — are stored as their literal
   drawn geometry (`app/_gating_widgets.py:_mask_from_shape`), not as a
@@ -153,9 +176,9 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
   through whatever chain of upstream gates/picker combinations fed it. This
   is not a scaled estimate — every one of the full file's events is tested
   against the same literal boundary a user drew. The full file's channel
-  values go through the identical arcsinh transform before that test, so
-  box/lasso/quadrant boundaries compare like-for-like against what was
-  actually drawn on screen.
+  values go through the identical cached Logicle transform before that
+  test, so box/lasso/quadrant boundaries compare like-for-like against what
+  was actually drawn on screen.
   - Point-click gates are the one shape that **can't** be replayed by
     coordinate comparison against the full file: raw channel values are
     often quantized, so an exact-equality match against ~2M events could
@@ -173,15 +196,22 @@ Full layout and conventions: [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.
 
 ### Remaining known gaps
 
-- **Arcsinh, not full Logicle/Hyperlog.** `arcsinh(x / cofactor)` is a
-  standard, lightweight approximation (comparable to common Cytobank/CyTOF
-  defaults), but a true Logicle/Hyperlog transform (data-driven per-channel
-  parameters rather than one fixed cofactor) is the more "correct" long-term
-  answer and isn't implemented.
-- **`score_se` is a heuristic, not an exact uncertainty propagation** — see
-  Compensation section above. It treats channels as independent when they
-  aren't fully so (shared fit subsamples across some pairs); it's useful for
-  catching "these scores aren't really different," not as a rigorous CI.
+- **Logicle's own parameter-estimation heuristic is one reasonable choice
+  among several in the literature.** `estimate_logicle_params`'s 99.9th
+  percentile for `T` and 5th-percentile-of-negatives for `r` are defensible,
+  documented defaults, but flow software varies in exactly which percentiles
+  it uses for auto-estimation (e.g. FlowJo/flowCore's choices aren't
+  identical to these). Not wrong, just not the one single universal
+  standard — a channel that looks slightly over- or under-spread on-screen
+  can still be adjusted by redrawing after a different compensation, since
+  the cache recomputes from whatever the channel's data looks like then.
+- **`score_se`'s bootstrap is small (`n_bootstrap=3`) and uses a reduced
+  `fit_size` for speed** — enough to catch "these scores aren't really
+  different" (see the Compensation section above and
+  `test_score_se_is_a_nonzero_empirical_bootstrap_not_a_fixed_formula`),
+  but a small bootstrap is itself a noisy estimate of variability; it isn't
+  a rigorous confidence interval, and could disagree with a larger/slower
+  bootstrap run at full `fit_size`.
 - **Fixed 90th/10th percentile split for control positive/negative
   populations** (`compensation/matrix.py:compute_spillover_row`) —
   reasonable default, but can misfire on a control with a small positive

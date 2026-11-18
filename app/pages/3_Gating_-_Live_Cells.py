@@ -15,9 +15,9 @@ from _gating_widgets import (
     render_flow,
     render_population_picker,
     render_section_gates,
+    transform_channel,
 )
 from flowcyto.io.metadata import build_channel_metadata
-from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import dark_set3_color
 from flowcyto.viz.raw import build_gated_histogram_figure
 
@@ -46,7 +46,7 @@ workspace = require_sample()
 sample = workspace.sample
 
 st.caption(f"Current sample: **{sample.filename}** — {sample.event_count:,} events, {len(sample.pnn_labels)} channels.")
-st.caption("Fluorescence channels are displayed on an arcsinh transform, which spreads out the dim and negative events a linear scale would compress near zero. Forward/side scatter and Time remain linear.")
+st.caption("Fluorescence channels are displayed on a Logicle transform, which spreads out the dim and negative events a linear scale would compress near zero. Forward/side scatter and Time remain linear.")
 
 REQUIRED_CHANNELS = ["FSC-A", "FSC-H", "SSC-A", "Time"]
 channel_index = {name: i for i, name in enumerate(sample.pnn_labels)}
@@ -74,13 +74,13 @@ else:
 
 
 def channel_values(channel: str) -> np.ndarray:
-    # Fluorescence channels are shown on an arcsinh display transform, not
+    # Fluorescence channels are shown on a Logicle display transform, not
     # the raw linear scale — a linear axis compresses the dim/negative
     # population into a sliver near zero. FSC/SSC/Time (not in
     # `fluor_channels`) stay linear, which is standard for scatter channels.
     if channel in fluor_channels:
         raw = compensated_fluor[:, fluor_channels.index(channel)] if compensated_fluor is not None else plot_values[:, channel_index[channel]]
-        return arcsinh_transform(raw)
+        return transform_channel(workspace, channel, raw, fluor_channels)
     return plot_values[:, channel_index[channel]]
 
 
@@ -192,7 +192,7 @@ with st.container(key="gate_card_live", border=True):
             gated_idx = np.flatnonzero(_union_masks(live_gates[2]))
             all_viability = channel_values(viability_channel)[pre_gate_idx]
             gated_viability = channel_values(viability_channel)[gated_idx]
-            st.caption(f"{viability_channel} distribution (arcsinh scale) for the full incoming population, with the gate(s) defined above highlighted.")
+            st.caption(f"{viability_channel} distribution (Logicle scale) for the full incoming population, with the gate(s) defined above highlighted.")
             st.plotly_chart(
                 build_gated_histogram_figure(all_viability, gated_viability, viability_channel, dark_set3_color(3)),
                 width="stretch",

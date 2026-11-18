@@ -6,6 +6,7 @@ from _common import ensure_src_on_path, require_sample
 
 ensure_src_on_path()
 
+from _gating_widgets import transform_channel
 from flowcyto.compensation.diagnostics import (
     matrix_fingerprint,
     pick_default_scenario,
@@ -16,7 +17,6 @@ from flowcyto.compensation.diagnostics import (
 )
 from flowcyto.compensation.matrix import apply_matrix_pct_negative, build_control_matrix, read_spill_metadata
 from flowcyto.io.metadata import build_channel_metadata
-from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import build_before_after_bar, build_ranked_bar
 from flowcyto.viz.heatmap import build_slope_heatmap, build_spillover_heatmap
 from flowcyto.viz.pairs import build_notable_pairs_grid, build_pair_detail_figure, rank_notable_pairs
@@ -150,10 +150,12 @@ with apply_col:
             st.error("This edit renders the matrix singular (non-invertible) and has not been applied.")
         else:
             workspace.spillover_matrix = edited.copy()
+            workspace.transforms = None  # compensation changed — cached Logicle params no longer apply
             st.rerun()
 with reset_col:
     if st.button("Reset matrix"):
         workspace.spillover_matrix = best.matrix.copy()
+        workspace.transforms = None  # compensation changed — cached Logicle params no longer apply
         if "matrix_editor" in st.session_state:
             del st.session_state["matrix_editor"]
         st.rerun()
@@ -217,12 +219,17 @@ if workspace.last_diagnostic is not None:
     )
 
 st.subheader("Notable channel pairs")
-st.caption("Channels below are displayed on an arcsinh transform, which spreads out the dim/negative events a linear scale would compress near zero.")
+st.caption("Channels below are displayed on a Logicle transform, which spreads out the dim/negative events a linear scale would compress near zero.")
 grid_idx = workspace.plot_subsample_indices if workspace.plot_subsample_indices is not None else np.arange(min(5000, len(raw_values)))
 # Display-only transform: the diagnostics/scoring above intentionally stay
 # on raw linear values (standard practice for fitting a compensation
-# matrix) — only this and the pair-detail plot below are transformed.
-compensated_subsample = arcsinh_transform(raw_values[grid_idx] @ np.linalg.inv(current_matrix.values))
+# matrix) — only this and the pair-detail plot below are transformed. Each
+# channel gets its own cached (T, W, M, A), reused by the gating pages too.
+compensated_linear = raw_values[grid_idx] @ np.linalg.inv(current_matrix.values)
+compensated_subsample = np.column_stack([
+    transform_channel(workspace, channel, compensated_linear[:, i], fluor_channels)
+    for i, channel in enumerate(fluor_channels)
+])
 grid_pairs = rank_notable_pairs(ranking_source, top_k=12)
 grid_fig = build_notable_pairs_grid(compensated_subsample, fluor_channels, grid_pairs)
 grid_event = st.plotly_chart(grid_fig, width="stretch", on_select="rerun", key="pairs_grid")

@@ -9,10 +9,33 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
+from flowcyto.transforms import estimate_logicle_params, logicle_transform
 from flowcyto.viz.bars import dark_set3_color
 from flowcyto.viz.raw import build_scatter_figure
 
 GATE_PCT = (5, 95)  # autoscale each axis to its central 90% of the data
+
+
+def transform_channel(workspace, channel: str, values: np.ndarray, fluor_channels: list[str]) -> np.ndarray:
+    """Display transform for one channel's values: Logicle for fluorescence
+    channels (not scatter/time, which stay linear). Logicle's (T, W, M, A)
+    parameters are data-driven per channel (`estimate_logicle_params`), but
+    MUST stay fixed once first computed and reused everywhere that channel
+    is shown — a gate is drawn against one specific transformed scale, and
+    resolving it against the full dataset later (`resolve_full_mask`) has to
+    replay that exact same scale, not a freshly re-estimated one.
+    `workspace.transforms` is the one persisted cache both halves of that
+    contract read from; callers that change what "compensated" means for a
+    channel (a new sample, a new/edited spillover matrix) must clear it."""
+    if channel not in fluor_channels:
+        return values
+    if workspace.transforms is None:
+        workspace.transforms = {}
+    params = workspace.transforms.get(channel)
+    if params is None:
+        params = estimate_logicle_params(values)
+        workspace.transforms[channel] = params
+    return logicle_transform(values, *params)
 
 # Plotly resets a plot's zoom/pan to its explicit axis range any time the
 # figure's shapes change — true even with a matching `uirevision`, confirmed

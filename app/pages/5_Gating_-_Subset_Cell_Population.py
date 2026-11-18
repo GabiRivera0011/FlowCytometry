@@ -13,9 +13,9 @@ from _gating_widgets import (
     extend_registry,
     render_population_picker,
     render_section_gates,
+    transform_channel,
 )
 from flowcyto.io.metadata import build_channel_metadata
-from flowcyto.transforms import arcsinh_transform
 from flowcyto.viz.bars import dark_set3_color
 
 st.set_page_config(page_title="Gating - Subset Cell Population — FlowCytometry", layout="wide")
@@ -59,11 +59,11 @@ else:
 
 
 def channel_values(channel: str) -> np.ndarray:
-    # Fluorescence channels are shown on an arcsinh display transform, not
+    # Fluorescence channels are shown on a Logicle display transform, not
     # the raw linear scale — see Gating — Live Cells for the full rationale.
     if channel in fluor_channels:
         raw = compensated_fluor[:, fluor_channels.index(channel)] if compensated_fluor is not None else plot_values[:, channel_index[channel]]
-        return arcsinh_transform(raw)
+        return transform_channel(workspace, channel, raw, fluor_channels)
     return plot_values[:, channel_index[channel]]
 
 
@@ -85,7 +85,7 @@ st.caption(
     "of plots may be added; each plot allows selection of any two channels and may be gated using boxes, lassos, "
     "points, or quadrants, consistent with the earlier gating pages."
 )
-st.caption("Fluorescence channels are displayed on an arcsinh transform; forward/side scatter remain linear.")
+st.caption("Fluorescence channels are displayed on a Logicle transform; forward/side scatter remain linear.")
 
 channel_options = list(sample.pnn_labels)
 default_x = "FSC-A" if "FSC-A" in channel_options else channel_options[0]
