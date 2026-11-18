@@ -5,7 +5,7 @@ from _common import ensure_src_on_path, require_sample
 
 ensure_src_on_path()
 
-from _gating_widgets import GATING_WIDGET_CSS, render_section_gates
+from _gating_widgets import GATING_WIDGET_CSS, _persist_value, _persisted_default, render_section_gates
 from flowcyto.io.metadata import build_channel_metadata
 from flowcyto.viz.bars import dark_set3_color
 from flowcyto.viz.lineage import build_live_split_diagram
@@ -61,12 +61,16 @@ def channel_values(channel: str) -> np.ndarray:
 # including any later adjustment there.
 if workspace.live_cells_mask is not None and len(workspace.live_cells_mask) == len(plot_idx):
     live_mask = workspace.live_cells_mask
+    live_mask_ref = workspace.live_cells_mask_ref or ("full",)
     incoming = int(live_mask.sum())
-    st.caption(f"Starting population: **{incoming:,}** Live cells carried over from the previous page.")
+    st.caption(f"Starting population: **{incoming:,}** Live cells, carried over from the preceding page.")
 else:
     live_mask = np.ones(len(plot_idx), dtype=bool)
+    live_mask_ref = ("full",)
     incoming = int(live_mask.sum())
-    st.info("No Live cells gate found yet — showing the full subsampled population. Visit **Gating — Live Cells** first for a cleaner starting point.")
+    st.info("No Live cells gate has been defined yet; the full subsampled population is shown instead. Visit **Gating — Live Cells** first for a cleaner starting point.")
+st.session_state["incoming_ref_lymphocytes"] = live_mask_ref
+st.session_state["incoming_ref_myeloid"] = live_mask_ref
 
 metadata = build_channel_metadata(sample)
 target_by_channel = dict(zip(metadata["channel"], metadata["target"]))
@@ -94,27 +98,38 @@ default_y = "SSC-A" if "SSC-A" in channel_options else channel_options[min(1, le
 
 
 def render_axis_pickers(key_prefix: str):
+    # Streamlit drops a selectbox's own stored value once it stops being
+    # rendered for even one run — i.e. the moment the user visits another
+    # page — silently resetting it to `index=`'s default. The persisted
+    # mirror is what makes a chosen marker pair stick across that.
+    x_key, y_key = f"{key_prefix}_x", f"{key_prefix}_y"
+    restored_x = _persisted_default(x_key, default_x)
+    restored_y = _persisted_default(y_key, default_y)
+    restored_x = restored_x if restored_x in channel_options else default_x
+    restored_y = restored_y if restored_y in channel_options else default_y
     col1, col2 = st.columns(2)
     with col1:
-        x = st.selectbox("X axis marker", channel_options, index=channel_options.index(default_x), format_func=channel_label, key=f"{key_prefix}_x")
+        x = st.selectbox("X axis marker", channel_options, index=channel_options.index(restored_x), format_func=channel_label, key=x_key)
+        _persist_value(x_key, x)
     with col2:
-        y = st.selectbox("Y axis marker", channel_options, index=channel_options.index(default_y), format_func=channel_label, key=f"{key_prefix}_y")
+        y = st.selectbox("Y axis marker", channel_options, index=channel_options.index(restored_y), format_func=channel_label, key=y_key)
+        _persist_value(y_key, y)
     if workspace.spillover_matrix is None and (x in fluor_channels or y in fluor_channels):
-        st.caption("Showing raw marker channels — visit Compensation first for a cleaner separation.")
+        st.caption("Raw, uncompensated marker channels are shown. Visit the Compensation page first for a cleaner separation.")
     return x, y
 
 
 with st.container(key="gate_card_lymphocytes", border=True):
     st.subheader("Lymphocytes")
     lymph_x, lymph_y = render_axis_pickers("lymph")
-    lymph_names, lymph_colors, lymph_masks = render_section_gates(
+    lymph_names, lymph_colors, lymph_masks, lymph_refs = render_section_gates(
         "lymphocytes", live_mask, lymph_x, lymph_y, channel_values(lymph_x), channel_values(lymph_y), color_offset=0,
     )
 
 with st.container(key="gate_card_myeloid", border=True):
     st.subheader("Myeloid cells")
     myeloid_x, myeloid_y = render_axis_pickers("myeloid")
-    myeloid_names, myeloid_colors, myeloid_masks = render_section_gates(
+    myeloid_names, myeloid_colors, myeloid_masks, myeloid_refs = render_section_gates(
         "myeloid", live_mask, myeloid_x, myeloid_y, channel_values(myeloid_x), channel_values(myeloid_y), color_offset=2,
     )
 
@@ -122,6 +137,8 @@ lymph_label = lymph_names[0] if lymph_names else "Lymphocytes"
 myeloid_label = myeloid_names[0] if myeloid_names else "Myeloid cells"
 lymph_mask = lymph_masks[0] if lymph_masks else np.zeros(len(plot_idx), dtype=bool)
 myeloid_mask = myeloid_masks[0] if myeloid_masks else np.zeros(len(plot_idx), dtype=bool)
+lymph_ref = lymph_refs[0] if lymph_refs else ("full",)
+myeloid_ref = myeloid_refs[0] if myeloid_refs else ("full",)
 
 st.plotly_chart(
     build_live_split_diagram(incoming, int(lymph_mask.sum()), int(myeloid_mask.sum()), lymph_label, myeloid_label),
@@ -130,10 +147,12 @@ st.plotly_chart(
 extra_lymph, extra_myeloid = len(lymph_names) - 1, len(myeloid_names) - 1
 if extra_lymph > 0 or extra_myeloid > 0:
     bits = [f"{n} extra {label} gate(s)" for n, label in [(extra_lymph, "Lymphocytes"), (extra_myeloid, "Myeloid")] if n > 0]
-    st.caption(f"{' and '.join(bits)} drawn above aren't shown in the split diagram, but are still available to later pages.")
+    st.caption(f"{' and '.join(bits)} defined above are not shown in the split diagram, but remain available to later pages.")
 
 workspace.lymphocytes_mask = lymph_mask
 workspace.myeloid_mask = myeloid_mask
+workspace.lymphocytes_mask_ref = lymph_ref
+workspace.myeloid_mask_ref = myeloid_ref
 
 st.divider()
 st.html(

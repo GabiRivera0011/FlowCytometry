@@ -60,7 +60,7 @@ with sample_col:
     bundled_sample_choice = None
     if bundled_samples and sample_upload is None:
         bundled_sample_choice = st.selectbox(
-            "...or use a bundled sample (dev only)", ["(none)"] + [p.name for p in bundled_samples]
+            "Or select a bundled sample (development use only)", ["(none)"] + [p.name for p in bundled_samples]
         )
         bundled_sample_choice = None if bundled_sample_choice == "(none)" else bundled_sample_choice
 
@@ -72,7 +72,9 @@ with controls_col:
     bundled_controls = sorted(DATA_DIR.glob("Comp_*.fcs")) if DATA_DIR.is_dir() else []
     use_bundled_controls = False
     if bundled_controls and not control_uploads:
-        use_bundled_controls = st.checkbox(f"...or use the {len(bundled_controls)} bundled controls (dev only)")
+        use_bundled_controls = st.checkbox(
+            f"Or use the {len(bundled_controls)} bundled control files (development use only)"
+        )
 
 sample_source = sample_upload or (
     next(p for p in bundled_samples if p.name == bundled_sample_choice) if bundled_sample_choice else None
@@ -109,7 +111,7 @@ else:
     workspace.controls_available = False
 
 if workspace.sample is None:
-    st.info("Upload (or pick a bundled) sample file to continue.")
+    st.info("Upload a sample file, or select a bundled sample, to continue.")
     st.stop()
 
 sample = workspace.sample
@@ -152,8 +154,9 @@ st.caption(
 array_size_mb = sample.raw_values.nbytes / (1024 * 1024)
 if array_size_mb > 300:
     st.warning(
-        f"This file's event data is ~{array_size_mb:.0f} MB in memory — large relative to "
-        "Streamlit Community Cloud's free-tier ~1 GB budget. Some views subsample for responsiveness."
+        f"This file's event data occupies approximately {array_size_mb:.0f} MB in memory, which is large "
+        "relative to Streamlit Community Cloud's free-tier budget of approximately 1 GB. Certain views "
+        "therefore render a subsample of the data to remain responsive."
     )
 
 st.divider()

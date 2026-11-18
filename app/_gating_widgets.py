@@ -28,6 +28,137 @@ AXIS_ZOOM_OPTIONS = {
     "All events": (0, 100),
 }
 
+
+def _persisted_default(key: str, fallback):
+    """The last value `_persist_value` saved for `key`, or `fallback` if
+    none exists yet. Streamlit drops a widget's own stored value the
+    moment that widget stops being rendered for even one run — which
+    happens any time the user visits a different page and comes back —
+    silently resetting it to its default. A plain (non-widget) mirror key
+    survives that, since it isn't part of Streamlit's widget registry."""
+    return st.session_state.get(f"{key}__persist", fallback)
+
+
+def _persist_value(key: str, current) -> None:
+    """Call right after the widget with the same `key`, passing its
+    return value, to save it into the mirror `_persisted_default` reads."""
+    st.session_state[f"{key}__persist"] = current
+
+
+def collect_section_gates(section: str) -> list[dict]:
+    """Every gate currently drawn in one section, read straight from
+    session_state rather than by re-rendering it — for read-only views
+    (a tabulation page, a cross-page population picker) that need every
+    gate across every gating page, not just whichever one is on screen."""
+    n_gates = st.session_state.get(f"n_gates_{section}", 1)
+    entries = []
+    for i in range(n_gates):
+        mask = st.session_state.get(f"gate_{section}_{i}_mask")
+        if mask is None:
+            continue
+        entries.append({
+            "name": st.session_state.get(f"gate_{section}_{i}_name", f"Gate {i + 1}"),
+            "mask": mask,
+            "color": dark_set3_color(i),
+            "ref": ("gate", section, i),
+        })
+    return entries
+
+
+# --- Exact full-dataset resolution -----------------------------------
+#
+# Every gate the UI draws only ever touches the fixed ~20k-event plotting
+# subsample, for speed. To answer "how many cells are *actually* in this
+# gate" (not a ratio-scaled estimate), each gate's own boundary — not its
+# subsample mask — gets replayed against the full, un-subsampled dataset:
+# recursively resolving whatever incoming population it was drawn against,
+# all the way back to "the full file," then re-applying each gate's exact
+# shape at that resolution. A "ref" is how one gate or picker choice points
+# at another, so this chain can be walked after the fact, independent of
+# whichever page happens to be on screen:
+#   ("full",)                - the entire file, unconditionally
+#   ("gate", section, index) - one specific drawn gate
+#   ("picker", key)          - one population-picker's chosen combination
+
+
+def _mask_from_shape(shape: dict, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """The same geometry test as `_mask_from_selection`, but from a saved
+    shape dict (what every gate persists) instead of a live Plotly
+    selection event — so a gate's exact boundary can be replayed against
+    any x/y arrays, including the full dataset, long after it was drawn."""
+    kind = shape.get("type")
+    if kind == "box":
+        x0, x1 = shape["x"]
+        y0, y1 = shape["y"]
+        return (x >= x0) & (x <= x1) & (y >= y0) & (y <= y1)
+    if kind == "points":
+        mask = np.zeros(len(x), dtype=bool)
+        for px, py in zip(shape["x"], shape["y"]):
+            mask |= (x == px) & (y == py)
+        return mask
+    if kind == "cross":
+        cx, cy = shape["x"], shape["y"]
+        quadrant = shape.get("quadrant", "UR")
+        x_ge = x >= cx if "R" in quadrant else x < cx
+        y_ge = y >= cy if quadrant.startswith("U") else y < cy
+        return x_ge & y_ge
+    # lasso
+    return _points_in_polygon(x, y, np.asarray(shape["x"]), np.asarray(shape["y"]))
+
+
+def resolve_full_mask(ref, channel_fn, n_full: int, cache: dict) -> np.ndarray:
+    """Recursively resolve a ref to its exact mask over the full,
+    un-subsampled dataset. `channel_fn(channel_name)` must return that
+    channel's (compensated) values for every event in the full file.
+    `cache` memoizes within one resolution pass — callers should pass the
+    same dict across all the refs they resolve, so shared ancestors (most
+    gates eventually trace back to the same Live Cells gate) are only
+    computed once."""
+    if ref is None:
+        ref = ("full",)
+    if ref in cache:
+        return cache[ref]
+
+    kind = ref[0]
+    if kind == "gate":
+        _, section, index = ref
+        shape = st.session_state.get(f"gate_{section}_{index}_shape")
+        incoming_ref = st.session_state.get(f"incoming_ref_{section}", ("full",))
+        incoming_full = resolve_full_mask(incoming_ref, channel_fn, n_full, cache)
+        x_label = st.session_state.get(f"section_{section}_x_label")
+        y_label = st.session_state.get(f"section_{section}_y_label")
+        if shape is None or x_label is None or y_label is None:
+            # Never actually drawn (still the default "Gate 1") — passes
+            # its incoming population through unmodified, same as the
+            # subsample side does.
+            result = incoming_full
+        else:
+            x_full, y_full = channel_fn(x_label), channel_fn(y_label)
+            result = _mask_from_shape(shape, x_full, y_full) & incoming_full
+    elif kind == "picker":
+        _, key = ref
+        definition = st.session_state.get(f"{key}__def")
+        refs = (definition or {}).get("refs") or []
+        if not refs:
+            result = np.ones(n_full, dtype=bool)
+        else:
+            sub_masks = [resolve_full_mask(r, channel_fn, n_full, cache) for r in refs]
+            if len(sub_masks) == 1:
+                result = sub_masks[0]
+            elif definition.get("op") == "union":
+                result = sub_masks[0].copy()
+                for m in sub_masks[1:]:
+                    result |= m
+            else:
+                result = sub_masks[0].copy()
+                for m in sub_masks[1:]:
+                    result &= m
+    else:  # "full", or anything unrecognized
+        result = np.ones(n_full, dtype=bool)
+
+    cache[ref] = result
+    return result
+
 GATING_WIDGET_CSS = """<style>
 .gate-flow {
     display: flex; align-items: center; justify-content: center;
@@ -203,14 +334,23 @@ def _union_masks(masks: list[np.ndarray]) -> np.ndarray:
 def render_section_gates(
     section: str, incoming_mask: np.ndarray, x_label: str, y_label: str,
     x_values: np.ndarray, y_values: np.ndarray, color_offset: int,
-) -> tuple[list[str], list[str], list[np.ndarray]]:
+) -> tuple[list[str], list[str], list[np.ndarray], list[tuple]]:
     """Every gate in a section lives on ONE shared plot: a picker chooses
     which gate a new box/lasso selection edits, and every gate already
     drawn stays visible as its own colored, named outline on that same
     figure — adding a gate never opens a second plot. Returns the section's
-    (names, colors, masks), which the next section's picker builds on."""
+    (names, colors, masks, refs) — refs are `("gate", section, index)`
+    pointers `resolve_full_mask` uses to replay a gate's exact boundary
+    against the full dataset later, on the Tabulation page.
+    """
     count_key = f"n_gates_{section}"
     n_gates = st.session_state.get(count_key, 1)
+    # Which two channels this section's plot is drawn on — needed later to
+    # recompute a gate's exact mask against the full dataset, since the
+    # shape alone (x/y coordinates) is meaningless without knowing which
+    # channels those coordinates are in.
+    st.session_state[f"section_{section}_x_label"] = x_label
+    st.session_state[f"section_{section}_y_label"] = y_label
 
     visible_idx = np.flatnonzero(incoming_mask)
     no_events = len(visible_idx) == 0
@@ -219,7 +359,7 @@ def render_section_gates(
         # out entirely — a bare warning with no chart at all left no way to
         # see why, switch the picker's combine mode, or just wait out a
         # temporary 0-event state while a gate elsewhere gets adjusted.
-        st.warning("No events remain going into this gate — the plot below is empty until you loosen an earlier gate or change how gates are combined above.")
+        st.warning("No events remain in the incoming population for this gate. The plot below will remain empty until an earlier gate is loosened or the combination method above is changed.")
 
     names = [st.session_state.get(f"gate_{section}_{i}_name", f"Gate {i + 1}") for i in range(n_gates)]
     colors = [dark_set3_color(color_offset + i) for i in range(n_gates)]
@@ -227,10 +367,18 @@ def render_section_gates(
     # A widget's own session_state key can't be reassigned after it's been
     # instantiated this run — so "start editing the gate I just finished
     # drawing" is staged here, before the selectbox exists, and consumed
-    # from a pending flag set (further down) on the previous run.
+    # from a pending flag set (further down) on the previous run. Falling
+    # back to the persisted mirror (below) covers the other way this key
+    # goes missing: Streamlit drops it outright after a visit to another
+    # page, with no pending flag involved.
+    active_key = f"active_gate_{section}"
     pending_key = f"pending_active_{section}"
     if pending_key in st.session_state:
-        st.session_state[f"active_gate_{section}"] = st.session_state.pop(pending_key)
+        st.session_state[active_key] = st.session_state.pop(pending_key)
+    elif active_key not in st.session_state:
+        restored = _persisted_default(active_key, None)
+        if restored == "new" or (isinstance(restored, int) and restored < n_gates):
+            st.session_state[active_key] = restored
 
     ctrl_col0, ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.2, 1.2, 0.9, 1.2])
     with ctrl_col0:
@@ -239,12 +387,17 @@ def render_section_gates(
         # crashing on the dict lookups below, same defensive shape as the
         # View control's `.get(view, "dot")` just underneath.
         gate_shape = st.segmented_control(
-            "Gate shape", ["Freeform", "Point", "Quadrant"], default="Freeform", key=f"gate_shape_{section}",
+            "Gate shape", ["Freeform", "Point", "Quadrant"],
+            default=_persisted_default(f"gate_shape_{section}", "Freeform"), key=f"gate_shape_{section}",
         ) or "Freeform"
+        _persist_value(f"gate_shape_{section}", gate_shape)
     with ctrl_col1:
         view = st.segmented_control(
-            "View", ["Dot plot", "Pseudocolor", "Contour", "Zebra"], default="Dot plot", key=f"view_mode_{section}",
+            "View", ["Dot plot", "Pseudocolor", "Contour", "Zebra"],
+            default=_persisted_default(f"view_mode_{section}", "Dot plot"), key=f"view_mode_{section}",
         )
+        if view is not None:
+            _persist_value(f"view_mode_{section}", view)
     mode = {"Pseudocolor": "pseudocolor", "Contour": "contour", "Zebra": "zebra"}.get(view, "dot")
 
     with ctrl_col2:
@@ -252,8 +405,9 @@ def render_section_gates(
         active = st.selectbox(
             "Editing", options, index=0,
             format_func=lambda v: "+ New gate" if v == "new" else names[v],
-            key=f"active_gate_{section}",
+            key=active_key,
         )
+        _persist_value(active_key, active)
     active_idx = n_gates if active == "new" else active
 
     with ctrl_col3:
@@ -264,16 +418,20 @@ def render_section_gates(
         typed_name = st.text_input("Name this gate", value=default_name, key=f"gate_{section}_{active_idx}_nameinput")
 
     shape_hint = {
-        "Freeform": "Drag a box, or switch to the lasso tool in the plot's toolbar, to draw this gate.",
-        "Point": "Click individual points to select them — shift-click to add more, a plain click replaces the selection.",
-        "Quadrant": "Click once to drop a crosshair — creates 4 gates at once (upper-right, upper-left, lower-left, lower-right), named from the field above.",
+        "Freeform": "Drag to draw a rectangular gate, or select the lasso tool from the plot toolbar to draw a freeform boundary.",
+        "Point": "Click individual points to select them. Hold Shift while clicking to add further points; a plain click replaces the current selection.",
+        "Quadrant": "Click once to place a crosshair, creating four gates simultaneously (upper-right, upper-left, lower-left, lower-right), named using the field above.",
     }[gate_shape]
     zoom_col, hint_col = st.columns([1, 2.5])
     with zoom_col:
+        zoom_options = list(AXIS_ZOOM_OPTIONS.keys())
         zoom_choice = st.selectbox(
-            "Axis zoom", list(AXIS_ZOOM_OPTIONS.keys()), key=f"axis_zoom_{section}",
-            help="Dragging/scrolling to zoom on the plot itself doesn't stick — Plotly resets it on every gate edit. Use this instead to see outlier cells beyond the default view; it persists.",
+            "Axis zoom", zoom_options,
+            index=zoom_options.index(_persisted_default(f"axis_zoom_{section}", zoom_options[0])),
+            key=f"axis_zoom_{section}",
+            help="Zooming or scrolling directly on the plot does not persist, as Plotly resets the view on every gate edit. Use this control instead to view outlier events beyond the default range; the selection is preserved.",
         )
+        _persist_value(f"axis_zoom_{section}", zoom_choice)
     with hint_col:
         st.caption(shape_hint)
     pct_range = AXIS_ZOOM_OPTIONS[zoom_choice]
@@ -381,7 +539,8 @@ def render_section_gates(
         if n_gates > 1 and st.button("Reset all gates in this section", key=f"reset_all_{section}"):
             reset_section(section)
 
-    return names, colors, masks
+    refs = [("gate", section, i) for i in range(n_gates)]
+    return names, colors, masks, refs
 
 
 def render_flow(kept: int, incoming: int) -> None:
@@ -389,19 +548,25 @@ def render_flow(kept: int, incoming: int) -> None:
     st.html(
         '<div class="gate-flow">'
         '<span class="gate-flow-arrow">↓</span>'
-        f'<span class="gate-flow-text">{kept:,} / {incoming:,} events ({pct:.1f}%) continue to the next gate.</span>'
+        f'<span class="gate-flow-text">{kept:,} of {incoming:,} events ({pct:.1f}%) proceed to the next gate.</span>'
         "</div>"
     )
 
 
-def extend_registry(registry: list[tuple[str, str, str, np.ndarray]], section_title: str, gates: tuple[list[str], list[str], list[np.ndarray]]) -> None:
+def extend_registry(
+    registry: list[tuple[str, str, str, np.ndarray, tuple]], section_title: str,
+    gates: tuple[list[str], list[str], list[np.ndarray]], refs: list[tuple],
+) -> None:
     """Add one section's gates to the running registry every later section
-    draws its population picker from."""
+    draws its population picker from. `refs` (one per gate, same order —
+    typically `render_section_gates`'s own 4th return value) is what lets
+    `resolve_full_mask` replay this gate's exact boundary against the full
+    dataset later, regardless of which page is on screen at the time."""
     labels, colors, masks = gates
-    registry.extend(zip([section_title] * len(labels), labels, colors, masks))
+    registry.extend(zip([section_title] * len(labels), labels, colors, masks, refs))
 
 
-def render_population_picker(registry: list[tuple[str, str, str, np.ndarray]], default_section_title: str, key: str, n_events: int) -> np.ndarray:
+def render_population_picker(registry: list[tuple[str, str, str, np.ndarray, tuple]], default_section_title: str, key: str, n_events: int) -> np.ndarray:
     """Every gate drawn anywhere so far — not just the immediately prior
     section's — is available here, and any combination of them can be
     ANDed or ORed together to build the next step's incoming population.
@@ -411,16 +576,28 @@ def render_population_picker(registry: list[tuple[str, str, str, np.ndarray]], d
     nothing stops you from reaching further back, adding more, or skipping
     gating entirely (clear the picker to fall back to the full population).
     `n_events` is the length of the page's plot subsample, for the
-    empty-registry/empty-selection fallback (all events)."""
+    empty-registry/empty-selection fallback (all events).
+
+    Also persists this picker's own choice — as refs, not just subsample
+    masks — under `{key}__def`, so `resolve_full_mask(("picker", key), ...)`
+    can replay the exact same combination against the full dataset later."""
     if not registry:
+        st.session_state[f"{key}__def"] = {"refs": [], "op": "intersect"}
         return np.ones(n_events, dtype=bool)
 
-    display = [f"{sec} — {label}" for sec, label, _color, _mask in registry]
+    display = [f"{sec} — {label}" for sec, label, _color, _mask, _ref in registry]
     # Only the first gate, not every gate from that section — a section can
     # hold several mutually-exclusive gates (a Quadrant split, most starkly),
     # and defaulting to all of them would AND disjoint gates together into a
     # silent, confusing 0.
     default = [d for d, (sec, *_rest) in zip(display, registry) if sec == default_section_title][:1]
+    # A prior, explicit choice (including a deliberately-cleared picker)
+    # beats that computed default — but only once it's actually been made;
+    # restoring it is also what undoes Streamlit dropping this widget's own
+    # state after a visit to another page and back.
+    persisted = _persisted_default(key, None)
+    if persisted is not None:
+        default = [d for d in persisted if d in display]
 
     # Each gate's own event count is shown up front — combining two gates
     # that individually look fine can still legitimately AND down to zero
@@ -429,24 +606,34 @@ def render_population_picker(registry: list[tuple[str, str, str, np.ndarray]], d
     swatches = "".join(
         f'<span style="display:inline-block;width:0.7em;height:0.7em;border-radius:50%;'
         f'background:{color};margin-right:0.3em;"></span>{d} <span style="color:#888;">({int(mask.sum()):,})</span>&nbsp;&nbsp;'
-        for d, (_sec, _label, color, mask) in zip(display, registry)
+        for d, (_sec, _label, color, mask, _ref) in zip(display, registry)
     )
     st.markdown(swatches, unsafe_allow_html=True)
     chosen = st.multiselect(
-        "Build this step's incoming population from:", display, default=default, key=key,
-        help="Every gate drawn so far is available here, with its own event count — combine any of them, from any earlier step, or clear this to skip gating.",
+        "Select the incoming population for this step:", display, default=default, key=key,
+        help="All gates defined so far are listed here, each with its corresponding event count. Any combination may be selected, including gates from earlier steps. Clear the selection to use the full population.",
     )
+    _persist_value(key, chosen)
 
     if not chosen:
+        st.session_state[f"{key}__def"] = {"refs": [], "op": "intersect"}
         return np.ones(n_events, dtype=bool)
-    chosen_masks = [mask for d, (_sec, _label, _color, mask) in zip(display, registry) if d in chosen]
+    chosen_masks = [mask for d, (_sec, _label, _color, mask, _ref) in zip(display, registry) if d in chosen]
+    chosen_refs = [ref for d, (_sec, _label, _color, _mask, ref) in zip(display, registry) if d in chosen]
     if len(chosen_masks) == 1:
+        st.session_state[f"{key}__def"] = {"refs": chosen_refs, "op": "intersect"}
         return chosen_masks[0]
 
+    combine_key = f"{key}_combine_op"
+    combine_options = ["Match ALL selected (intersection)", "Match ANY selected (union)"]
     combine_op = st.radio(
-        "Combine the selected gates as", ["Match ALL selected (intersection)", "Match ANY selected (union)"], horizontal=True, key=f"{key}_combine_op",
-        help="ALL: an event must satisfy every selected gate at once — narrowing to a subset. ANY: an event only needs to satisfy one of them — two alternative populations (like a Quadrant's 4 gates) would otherwise always AND down to zero.",
+        "Combine the selected gates as", combine_options, horizontal=True, key=combine_key,
+        index=combine_options.index(_persisted_default(combine_key, combine_options[0])),
+        help="ALL (intersection): an event must satisfy every selected gate simultaneously, producing a narrower subset. ANY (union): an event need only satisfy one of the selected gates — appropriate when combining alternative populations, such as the four gates produced by a Quadrant split, which would otherwise always intersect to zero.",
     )
+    _persist_value(combine_key, combine_op)
+    op = "union" if combine_op == "Match ANY selected (union)" else "intersect"
+    st.session_state[f"{key}__def"] = {"refs": chosen_refs, "op": op}
     if combine_op == "Match ANY selected (union)":
         return _union_masks(chosen_masks)
     return _combine_masks(chosen_masks)

@@ -33,6 +33,14 @@ class Workspace:
     lymphocytes_mask: np.ndarray | None = None
     myeloid_mask: np.ndarray | None = None
 
+    # Each mask above as a ("gate", section, index) / ("picker", key) ref —
+    # see app/_gating_widgets.py's `resolve_full_mask` — so a later gating
+    # page can replay the exact gate(s) behind it against the full,
+    # un-subsampled dataset instead of guessing which section produced it.
+    live_cells_mask_ref: tuple | None = None
+    lymphocytes_mask_ref: tuple | None = None
+    myeloid_mask_ref: tuple | None = None
+
     # stubs for later phases, per docs/ARCHITECTURE.md's full stated Workspace scope
     gating_strategy: Any | None = None
     transforms: dict | None = None

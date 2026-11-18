@@ -22,8 +22,8 @@ workspace = get_workspace()
 
 st.markdown(
     "Load an `.fcs` or `.csv` sample, assess and adjust compensation, then gate "
-    "down to the populations you care about. Each step builds on the one "
-    "before it and lives on its own page in the sidebar."
+    "the populations of interest. Each step builds upon the one before it and "
+    "is accessible from its own page in the sidebar."
 )
 
 st.divider()
@@ -32,7 +32,7 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     st.subheader("1. Parse and View")
-    st.write("Load a sample (and optional compensation controls), see channel metadata, and preview raw scatter/histogram views.")
+    st.write("Load a sample, with optional compensation controls, to view channel metadata and preview raw scatter and histogram plots.")
     st.page_link("pages/1_Parse_and_View.py", label="Open →")
 
 with col2:
@@ -42,10 +42,10 @@ with col2:
 
 with col3:
     st.subheader("3. Gating — Live Cells")
-    st.write("Gate out debris, doublets, and dead cells: acquisition QC, forward/side scatter, singlets, and viability.")
+    st.write("Exclude debris, doublets, and dead cells through acquisition quality control, forward/side scatter, singlet discrimination, and viability gating.")
     st.page_link("pages/3_Gating_-_Live_Cells.py", label="Open →")
 
-col4, col5 = st.columns(3)[:2]
+col4, col5, col6 = st.columns(3)
 
 with col4:
     st.subheader("4. Gating — Broad Cellular Lineage")
@@ -57,10 +57,15 @@ with col5:
     st.write("Separate monocytes from dendritic cells, then explore cDC1/cDC2/pDC subsets among the dendritic cells.")
     st.page_link("pages/5_Gating_-_Subset_Cell_Population.py", label="Open →")
 
+with col6:
+    st.subheader("6. Gating — Tabulation")
+    st.write("View every gate defined across the gating pages in a single table, including event counts, percentage of subsample, percentage of Live cells, and exact counts in the full file.")
+    st.page_link("pages/6_Gating_-_Tabulation.py", label="Open →")
+
 st.divider()
 
 if workspace.sample is None:
-    st.info("No sample loaded yet. Start with **Parse and View**.")
+    st.info("No sample has been loaded yet. Begin with **Parse and View**.")
 else:
     sample = workspace.sample
     status = f"**{sample.filename}** loaded: {sample.event_count:,} events, {len(sample.pnn_labels)} channels"

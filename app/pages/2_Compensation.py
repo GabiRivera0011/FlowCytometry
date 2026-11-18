@@ -32,12 +32,13 @@ with st.expander("How the scoring works"):
         "dimmest 20th percentile. At that low level, real co-expression "
         "biology should not produce a relationship, so any slope that "
         "remains points to spillover or autofluorescence instead.\n\n"
-        "A negative slope is the tell for over-compensation: real spillover "
-        "only adds signal, it never subtracts it. The score shown below "
-        '("% flagged pairs") is the average, across channels, of how many '
-        "incoming pairs come out negative. Lower is better. It is what the "
-        "app uses to pick the default matrix and, once you run the full "
-        "diagnostic, to rank the notable pairs further down this page."
+        "A negative slope indicates over-compensation: genuine spillover only "
+        "adds signal and never subtracts it. The score shown below "
+        '("% flagged pairs") is the average, across channels, of the '
+        "proportion of incoming pairs that come out negative. A lower score "
+        "is better. This score determines the default matrix selected by the "
+        "application and, once the full diagnostic has been run, ranks the "
+        "notable pairs further down this page."
     )
 
 workspace = require_sample()
@@ -87,7 +88,7 @@ workspace.control_filenames = control_files
 st.header("Compensation scenario")
 
 if not workspace.controls_available:
-    st.caption("No compensation controls uploaded — comparing raw data against an automatic, control-free search.")
+    st.caption("No compensation controls have been uploaded. Raw data is being compared against an automatic, control-free search.")
     if st.button("Run automatic search"):
         search_matrix, accepted = _cached_validated_search(sample.content_hash, raw_values, fluor_channels)
         detail = (
@@ -105,18 +106,21 @@ if workspace.spillover_matrix is None:
 best = pick_default_scenario(scenarios)
 score_lines = "; ".join(f"{s.name}: {s.score:.1f}% flagged pairs" for s in scenarios)
 if best.score < 5:
-    st.success(f"Showing: **{best.name}** — {best.detail} ({score_lines})")
+    st.success(f"Displaying **{best.name}**: {best.detail} ({score_lines})")
 else:
-    st.warning(f"Showing: **{best.name}** — {best.detail} ({score_lines})")
+    st.warning(f"Displaying **{best.name}**: {best.detail} ({score_lines})")
 
 if workspace.uncontrolled_channels:
-    st.caption(f"{len(workspace.uncontrolled_channels)}/{len(fluor_channels)} channels have no matching control (left as identity).")
+    st.caption(
+        f"{len(workspace.uncontrolled_channels)} of {len(fluor_channels)} channels have no matching control "
+        "and are therefore left as identity."
+    )
 
 st.divider()
 
 # --- Editable matrix ---
 st.header("Compensation matrix")
-st.caption("Edit any cell, then **Apply changes**. **Reset matrix** restores the scenario chosen above.")
+st.caption("Edit any cell, then select **Apply changes**. **Reset matrix** restores the scenario selected above.")
 
 edited = st.data_editor(
     workspace.spillover_matrix,
@@ -134,7 +138,7 @@ with apply_col:
         try:
             np.linalg.inv(edited.values)
         except np.linalg.LinAlgError:
-            st.error("That edit makes the matrix singular (not invertible) — not applied.")
+            st.error("This edit renders the matrix singular (non-invertible) and has not been applied.")
         else:
             workspace.spillover_matrix = edited.copy()
             st.rerun()
@@ -171,11 +175,11 @@ diag_is_current = diag is not None and diag.for_matrix_fingerprint == matrix_fin
 
 if diag_is_current:
     ranking_source = diag.slopes.loc[marker_channels, marker_channels]
-    ranking_note = "Ranked by the full diagnostic's observed channel-to-channel slope — data-driven, not just the matrix's declared coefficients."
+    ranking_note = "Ranked by the full diagnostic's observed channel-to-channel slope, which is data-driven rather than based solely on the matrix's declared coefficients."
     ranked_bar_title, ranked_bar_xaxis = "Most notable channel pairs (by observed slope)", "slope"
 else:
     ranking_source = matrix_marker
-    ranking_note = "Ranked by the current matrix's coefficients. Run the full diagnostic below for data-driven ranking — matrix coefficients are 0 for every pair on an unmodified identity matrix, so this ranking is uninformative until then."
+    ranking_note = "Ranked by the current matrix's coefficients. Run the full diagnostic below for a data-driven ranking; matrix coefficients are 0 for every pair on an unmodified identity matrix, so this ranking remains uninformative until then."
     ranked_bar_title, ranked_bar_xaxis = "Largest spillover coefficients in the current matrix", "coefficient"
 
 top_pairs = rank_notable_pairs(ranking_source, top_k=10)
@@ -216,7 +220,7 @@ if grid_event and grid_event.selection and grid_event.selection.points:
     if curve_number < len(grid_pairs):
         selected_pair = grid_pairs[curve_number][1:]
 
-st.caption("Or pick any pair directly:")
+st.caption("Alternatively, select a specific channel pair:")
 pick_col1, pick_col2 = st.columns(2)
 with pick_col1:
     x_channel = st.selectbox("Channel X", marker_channels, index=marker_channels.index(selected_pair[0]) if selected_pair else 0)
