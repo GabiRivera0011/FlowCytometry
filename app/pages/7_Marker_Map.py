@@ -13,6 +13,18 @@ from flowcyto.viz.scatter3d import build_marker_scatter3d_figure
 
 st.set_page_config(page_title="Marker Map — FlowCytometry", layout="wide")
 
+st.html(
+    """<style>
+    .st-key-map_plot_card {
+        border-radius: 16px !important;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+        padding: 1.5rem 1.75rem;
+        border: 2px solid #014421 !important;
+        background-color: #000000 !important;
+    }
+    </style>"""
+)
+
 workspace = require_sample()
 sample = workspace.sample
 
@@ -136,14 +148,15 @@ else:
     highlight_choices = st.multiselect("Gated population(s)", list(gate_options.keys()))
     highlights = [(gate_options[label], label, dark_set3_color(i)) for i, label in enumerate(highlight_choices)]
 
-st.plotly_chart(
-    build_marker_scatter3d_figure(
-        channel_values(x_axis), channel_values(y_axis), channel_values(z_axis),
-        channel_label(x_axis), channel_label(y_axis), channel_label(z_axis),
-        color_values=color_values, color_label=color_label, highlights=highlights,
-    ),
-    width="stretch",
-)
+with st.container(key="map_plot_card", border=True):
+    st.plotly_chart(
+        build_marker_scatter3d_figure(
+            channel_values(x_axis), channel_values(y_axis), channel_values(z_axis),
+            channel_label(x_axis), channel_label(y_axis), channel_label(z_axis),
+            color_values=color_values, color_label=color_label, highlights=highlights,
+        ),
+        width="stretch",
+    )
 st.caption(
     f"Scatter computed from **{n_events:,}** subsampled events. Named marker axes are arcsinh-transformed, "
     "same as the gating pages; FSC/SSC axes remain linear."

@@ -5,8 +5,8 @@ import plotly.graph_objects as go
 
 from flowcyto.viz.heatmap import SEQUENTIAL_GREEN
 
-TEXT_COLOR = "#0b0b0b"
-NEUTRAL_COLOR = "#b0b5bd"
+TEXT_COLOR = "#e5e5e5"
+NEUTRAL_COLOR = "#89cff0"  # baby blue
 
 
 def _percentile_range(values: np.ndarray, low_pct: float, high_pct: float) -> tuple[float, float]:
@@ -37,18 +37,14 @@ def build_marker_scatter3d_figure(
       other point falls back to a neutral gray so the highlighted
       population(s) still stand out.
     """
-    # A thin gray outline keeps every dot visible against the white
-    # background, including the lightest end of the color scale, which
-    # would otherwise nearly disappear with no border at all.
-    outline = dict(width=0.5, color="#4d4d4d")
     if color_values is not None:
         lo, hi = _percentile_range(color_values, *pct_range)
         marker = dict(
             size=3, color=color_values, colorscale=SEQUENTIAL_GREEN, cmin=lo, cmax=hi, reversescale=True,
-            colorbar=dict(title=color_label, thickness=12, len=0.9), opacity=0.8, line=outline,
+            colorbar=dict(title=color_label, thickness=12, len=0.9), opacity=0.8,
         )
     else:
-        marker = dict(size=3, color=NEUTRAL_COLOR, opacity=0.5, line=outline)
+        marker = dict(size=3, color=NEUTRAL_COLOR, opacity=0.5)
 
     fig = go.Figure(go.Scatter3d(x=x, y=y, z=z, mode="markers", marker=marker, name="All events", showlegend=False))
 
@@ -57,13 +53,25 @@ def build_marker_scatter3d_figure(
             continue
         fig.add_trace(go.Scatter3d(
             x=x[mask], y=y[mask], z=z[mask], mode="markers",
-            marker=dict(size=4, color=color, opacity=0.9, line=outline),
+            marker=dict(size=4, color=color, opacity=0.9),
             name=label, showlegend=True,
         ))
 
+    # A black scene AND paper background (rather than white or gray) gives
+    # the pale end of the green colorscale something to actually pop
+    # against, with no mismatched white margin around the cube.
+    scene_pane = dict(
+        backgroundcolor="#000000", gridcolor="#4d4d4d", zerolinecolor="#4d4d4d",
+        linecolor="#4d4d4d", showbackground=True, tickfont=dict(color="#d6d6d6"),
+    )
+
+    def _axis(title: str) -> dict:
+        return dict(title=dict(text=title, font=dict(color="#d6d6d6")), **scene_pane)
+
     fig.update_layout(
         template="simple_white", font_color=TEXT_COLOR, height=650,
+        paper_bgcolor="#000000",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        scene=dict(xaxis=dict(title=x_label), yaxis=dict(title=y_label), zaxis=dict(title=z_label)),
+        scene=dict(xaxis=_axis(x_label), yaxis=_axis(y_label), zaxis=_axis(z_label)),
     )
     return fig
