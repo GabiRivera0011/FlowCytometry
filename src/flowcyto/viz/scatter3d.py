@@ -37,14 +37,18 @@ def build_marker_scatter3d_figure(
       other point falls back to a neutral gray so the highlighted
       population(s) still stand out.
     """
+    # A thin gray outline keeps every dot visible against the white
+    # background, including the lightest end of the color scale, which
+    # would otherwise nearly disappear with no border at all.
+    outline = dict(width=0.5, color="#4d4d4d")
     if color_values is not None:
         lo, hi = _percentile_range(color_values, *pct_range)
         marker = dict(
             size=3, color=color_values, colorscale=SEQUENTIAL_GREEN, cmin=lo, cmax=hi, reversescale=True,
-            colorbar=dict(title=color_label, thickness=12, len=0.9), opacity=0.8,
+            colorbar=dict(title=color_label, thickness=12, len=0.9), opacity=0.8, line=outline,
         )
     else:
-        marker = dict(size=3, color=NEUTRAL_COLOR, opacity=0.5)
+        marker = dict(size=3, color=NEUTRAL_COLOR, opacity=0.5, line=outline)
 
     fig = go.Figure(go.Scatter3d(x=x, y=y, z=z, mode="markers", marker=marker, name="All events", showlegend=False))
 
@@ -53,7 +57,7 @@ def build_marker_scatter3d_figure(
             continue
         fig.add_trace(go.Scatter3d(
             x=x[mask], y=y[mask], z=z[mask], mode="markers",
-            marker=dict(size=4, color=color, opacity=0.9),
+            marker=dict(size=4, color=color, opacity=0.9, line=outline),
             name=label, showlegend=True,
         ))
 

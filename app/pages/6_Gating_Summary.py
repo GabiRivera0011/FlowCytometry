@@ -142,8 +142,16 @@ else:
 
     st.dataframe(df, width="stretch", hide_index=True, column_config=column_config)
 
+    # Round to match the on-screen table's 1-decimal display, rather than
+    # exporting full-precision floats the app never actually shows.
+    export_df = df.copy()
+    pct_cols = ["% of subsample", "% of full file", "Subsample vs. full-file gap (pp)"]
+    if "% of Live cells" in export_df.columns:
+        pct_cols.append("% of Live cells")
+    export_df[pct_cols] = export_df[pct_cols].round(1)
+
     st.download_button(
-        "Download as CSV", df.to_csv(index=False), file_name="gated_cell_counts.csv", mime="text/csv",
+        "Download as CSV", export_df.to_csv(index=False), file_name="gated_cell_counts.csv", mime="text/csv",
     )
 
 st.divider()
