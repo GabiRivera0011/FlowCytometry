@@ -15,12 +15,15 @@ st.set_page_config(page_title="Marker Map — FlowCytometry", layout="wide")
 
 st.html(
     """<style>
-    .st-key-map_plot_card {
+    div[class*="st-key-map_plot_card_"] {
         border-radius: 16px !important;
         box-shadow: 0 4px 14px rgba(0,0,0,0.12);
         padding: 1.5rem 1.75rem;
         border: 2px solid #014421 !important;
         background-color: #000000 !important;
+    }
+    div[class*="st-key-map_plot_card_"] label p {
+        color: #e5e5e5 !important;
     }
     </style>"""
 )
@@ -86,81 +89,126 @@ if len(axis_channels) < 3:
     st.info("At least 3 channels (scatter or named markers) are needed for a 3D scatter.")
     st.stop()
 
-axis_defaults = [
-    _persisted_default("map_x_axis", axis_channels[0]),
-    _persisted_default("map_y_axis", axis_channels[min(1, len(axis_channels) - 1)]),
-    _persisted_default("map_z_axis", axis_channels[min(2, len(axis_channels) - 1)]),
-]
-axis_defaults = [c if c in axis_channels else axis_channels[0] for c in axis_defaults]
-
-x_col, y_col, z_col = st.columns(3)
-with x_col:
-    x_axis = st.selectbox("X axis", axis_channels, index=axis_channels.index(axis_defaults[0]), format_func=channel_label)
-    _persist_value("map_x_axis", x_axis)
-with y_col:
-    y_axis = st.selectbox("Y axis", axis_channels, index=axis_channels.index(axis_defaults[1]), format_func=channel_label)
-    _persist_value("map_y_axis", y_axis)
-with z_col:
-    z_axis = st.selectbox("Z axis", axis_channels, index=axis_channels.index(axis_defaults[2]), format_func=channel_label)
-    _persist_value("map_z_axis", z_axis)
-
-if len({x_axis, y_axis, z_axis}) < 3:
-    st.warning("Pick three different channels for X, Y, and Z — a repeated axis collapses the scatter flat.")
-
-color_mode = st.segmented_control(
-    "Color by", ["Marker", "Gated population(s)"],
-    default=_persisted_default("map_color_mode", "Marker"), key="map_color_mode_widget",
-    help="Marker: a continuous gradient of a 4th marker's expression. Gated population(s): one or more "
-    "already-defined gates, each in its own color, with everything else shown in neutral gray.",
-) or "Marker"
-_persist_value("map_color_mode", color_mode)
-
-color_values = color_label = None
-highlights: list[tuple[np.ndarray, str, str]] = []
-
-if color_mode == "Marker":
-    restored_marker = _persisted_default("map_color_channel", axis_channels[0])
-    restored_marker = restored_marker if restored_marker in axis_channels else axis_channels[0]
-    color_channel = st.selectbox(
-        "Color by marker", axis_channels, index=axis_channels.index(restored_marker), format_func=channel_label,
-    )
-    _persist_value("map_color_channel", color_channel)
-    color_values, color_label = channel_values(color_channel), channel_label(color_channel)
-else:
-    gate_options: dict[str, np.ndarray] = {}
-    for section, location_label in [
-        ("acquisition", "Acquisition"), ("debris", "Cellular debris"),
-        ("singlets", "Single cells"), ("live", "Live cells"),
-        ("lymphocytes", "Lymphocytes"), ("myeloid", "Myeloid cells"),
-    ]:
-        for gate in collect_section_gates(section):
-            if len(gate["mask"]) == n_events:
-                gate_options[f"{location_label} — {gate['name']}"] = gate["mask"]
-    for page_id in st.session_state.get("subset_pages", []):
-        page_title = st.session_state.get(f"subset_page_{page_id}_title", "Page")
-        for plot_id in st.session_state.get(f"subset_page_{page_id}_plot_ids", []):
-            section = f"subset_{page_id}_{plot_id}"
-            plot_title = st.session_state.get(f"subset_{section}_title", "Plot")
-            for gate in collect_section_gates(section):
-                if len(gate["mask"]) == n_events:
-                    gate_options[f"{page_title} — {plot_title} — {gate['name']}"] = gate["mask"]
-
-    highlight_choices = st.multiselect("Gated population(s)", list(gate_options.keys()))
-    highlights = [(gate_options[label], label, dark_set3_color(i)) for i, label in enumerate(highlight_choices)]
-
-with st.container(key="map_plot_card", border=True):
-    st.plotly_chart(
-        build_marker_scatter3d_figure(
-            channel_values(x_axis), channel_values(y_axis), channel_values(z_axis),
-            channel_label(x_axis), channel_label(y_axis), channel_label(z_axis),
-            color_values=color_values, color_label=color_label, highlights=highlights,
-        ),
-        width="stretch",
-    )
 st.caption(
     f"Scatter computed from **{n_events:,}** subsampled events. Named marker axes are arcsinh-transformed, "
     "same as the gating pages; FSC/SSC axes remain linear."
 )
+
+# Gate options for "Gated population(s)" color mode are shared across every
+# plot on this page — computed once up front rather than inside the loop.
+gate_options: dict[str, np.ndarray] = {}
+for section, location_label in [
+    ("acquisition", "Acquisition"), ("debris", "Cellular debris"),
+    ("singlets", "Single cells"), ("live", "Live cells"),
+    ("lymphocytes", "Lymphocytes"), ("myeloid", "Myeloid cells"),
+]:
+    for gate in collect_section_gates(section):
+        if len(gate["mask"]) == n_events:
+            gate_options[f"{location_label} — {gate['name']}"] = gate["mask"]
+for page_id in st.session_state.get("subset_pages", []):
+    page_title = st.session_state.get(f"subset_page_{page_id}_title", "Page")
+    for plot_id in st.session_state.get(f"subset_page_{page_id}_plot_ids", []):
+        section = f"subset_{page_id}_{plot_id}"
+        plot_title = st.session_state.get(f"subset_{section}_title", "Plot")
+        for gate in collect_section_gates(section):
+            if len(gate["mask"]) == n_events:
+                gate_options[f"{page_title} — {plot_title} — {gate['name']}"] = gate["mask"]
+
+
+def remove_map_plot(plot_id: int) -> None:
+    for k in [
+        f"map_x_axis_{plot_id}", f"map_y_axis_{plot_id}", f"map_z_axis_{plot_id}",
+        f"map_color_mode_{plot_id}", f"map_color_channel_{plot_id}",
+        f"map_x_axis_widget_{plot_id}", f"map_y_axis_widget_{plot_id}", f"map_z_axis_widget_{plot_id}",
+        f"map_color_mode_widget_{plot_id}", f"map_color_channel_widget_{plot_id}", f"map_highlights_{plot_id}",
+    ]:
+        st.session_state.pop(k, None)
+    st.session_state["map_plot_ids"].remove(plot_id)
+
+
+if "map_plot_ids" not in st.session_state:
+    st.session_state["map_plot_ids"] = [0]
+    st.session_state["map_plot_next_id"] = 1
+
+plot_ids: list[int] = st.session_state["map_plot_ids"]
+
+for idx, pid in enumerate(plot_ids):
+    with st.container(key=f"map_plot_card_{pid}", border=True):
+        if len(plot_ids) > 1 and st.button("Remove plot", key=f"map_remove_{pid}"):
+            remove_map_plot(pid)
+            st.rerun()
+
+        axis_defaults = [
+            _persisted_default(f"map_x_axis_{pid}", axis_channels[0]),
+            _persisted_default(f"map_y_axis_{pid}", axis_channels[min(1, len(axis_channels) - 1)]),
+            _persisted_default(f"map_z_axis_{pid}", axis_channels[min(2, len(axis_channels) - 1)]),
+        ]
+        axis_defaults = [c if c in axis_channels else axis_channels[0] for c in axis_defaults]
+
+        x_col, y_col, z_col = st.columns(3)
+        with x_col:
+            x_axis = st.selectbox(
+                "X axis", axis_channels, index=axis_channels.index(axis_defaults[0]),
+                format_func=channel_label, key=f"map_x_axis_widget_{pid}",
+            )
+            _persist_value(f"map_x_axis_{pid}", x_axis)
+        with y_col:
+            y_axis = st.selectbox(
+                "Y axis", axis_channels, index=axis_channels.index(axis_defaults[1]),
+                format_func=channel_label, key=f"map_y_axis_widget_{pid}",
+            )
+            _persist_value(f"map_y_axis_{pid}", y_axis)
+        with z_col:
+            z_axis = st.selectbox(
+                "Z axis", axis_channels, index=axis_channels.index(axis_defaults[2]),
+                format_func=channel_label, key=f"map_z_axis_widget_{pid}",
+            )
+            _persist_value(f"map_z_axis_{pid}", z_axis)
+
+        if len({x_axis, y_axis, z_axis}) < 3:
+            st.warning("Pick three different channels for X, Y, and Z — a repeated axis collapses the scatter flat.")
+
+        color_mode = st.segmented_control(
+            "Color by", ["Marker", "Gated population(s)"],
+            default=_persisted_default(f"map_color_mode_{pid}", "Marker"), key=f"map_color_mode_widget_{pid}",
+            help="Marker: a continuous gradient of a 4th marker's expression. Gated population(s): one or more "
+            "already-defined gates, each in its own color, with everything else shown in neutral gray.",
+        ) or "Marker"
+        _persist_value(f"map_color_mode_{pid}", color_mode)
+
+        color_values = color_label = None
+        highlights: list[tuple[np.ndarray, str, str]] = []
+
+        if color_mode == "Marker":
+            restored_marker = _persisted_default(f"map_color_channel_{pid}", axis_channels[0])
+            restored_marker = restored_marker if restored_marker in axis_channels else axis_channels[0]
+            color_channel = st.selectbox(
+                "Color by marker", axis_channels, index=axis_channels.index(restored_marker),
+                format_func=channel_label, key=f"map_color_channel_widget_{pid}",
+            )
+            _persist_value(f"map_color_channel_{pid}", color_channel)
+            color_values, color_label = channel_values(color_channel), channel_label(color_channel)
+        else:
+            highlight_choices = st.multiselect(
+                "Gated population(s)", list(gate_options.keys()), key=f"map_highlights_{pid}",
+            )
+            highlights = [(gate_options[label], label, dark_set3_color(i)) for i, label in enumerate(highlight_choices)]
+
+        st.plotly_chart(
+            build_marker_scatter3d_figure(
+                channel_values(x_axis), channel_values(y_axis), channel_values(z_axis),
+                channel_label(x_axis), channel_label(y_axis), channel_label(z_axis),
+                color_values=color_values, color_label=color_label, highlights=highlights,
+            ),
+            width="stretch",
+            key=f"map_chart_{pid}",
+        )
+
+if st.button("+ Add another plot"):
+    new_id = st.session_state["map_plot_next_id"]
+    st.session_state["map_plot_next_id"] += 1
+    st.session_state["map_plot_ids"].append(new_id)
+    st.rerun()
 
 st.divider()
 if st.button("← Back: Gating Summary", width="stretch"):
