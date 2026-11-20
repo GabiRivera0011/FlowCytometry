@@ -1,7 +1,10 @@
 from pathlib import Path
 
+import pytest
+
+import flowcyto.io.fcs as fcs_module
 from flowcyto.io.csv_source import load_csv
-from flowcyto.io.fcs import load_fcs
+from flowcyto.io.fcs import FCSTooLargeError, _peek_fcs_dimensions, load_fcs
 from flowcyto.io.metadata import build_channel_metadata
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -15,6 +18,19 @@ def test_load_fcs_reads_events_and_labels():
     assert sample.raw_values.dtype.name == "float32"
     assert "FSC-A" in sample.pnn_labels
     assert "CD11c APC" in sample.pns_labels
+
+
+def test_peek_fcs_dimensions_matches_full_parse_without_reading_data_segment():
+    event_count, channel_count = _peek_fcs_dimensions(FIXTURES / "pbmc_sample.fcs")
+    sample = load_fcs(FIXTURES / "pbmc_sample.fcs", "pbmc_sample.fcs")
+    assert event_count == sample.event_count == 2000
+    assert channel_count == len(sample.pnn_labels)
+
+
+def test_load_fcs_rejects_a_file_over_the_configured_size_cap(monkeypatch):
+    monkeypatch.setattr(fcs_module, "MAX_FCS_CELLS", 100)
+    with pytest.raises(FCSTooLargeError, match="pbmc_sample.fcs"):
+        load_fcs(FIXTURES / "pbmc_sample.fcs", "pbmc_sample.fcs")
 
 
 def test_channel_metadata_classifies_scatter_time_and_markers():

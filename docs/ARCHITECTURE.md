@@ -18,6 +18,15 @@ Streamlit Community Cloud (free tier):
   (clustering, UMAP) must stay within the free tier's memory/CPU budget, so
   v1 should cap sample size (e.g. subsample events above a threshold before
   UMAP/clustering) rather than assume unlimited compute.
+- An FCS file is always parsed into one full, dense in-memory array (no
+  chunked/streaming read) — `flowcyto.io.fcs.load_fcs` rejects a file up
+  front (`FCSTooLargeError`, before attempting the full parse) if its
+  declared `event_count * channel_count` would be unsafe for this budget.
+  Raising that ceiling for real would mean bypassing FlowKit's FCS parser
+  for a hand-rolled chunked DATA-segment reader — not done, since it would
+  mean re-deriving byte-order/datatype/gain handling FlowKit already gets
+  right. `.streamlit/config.toml`'s `maxUploadSize` is a blunt backstop on
+  top of that precise check, not the real safety net.
 
 ## Layers
 

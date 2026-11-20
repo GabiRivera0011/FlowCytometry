@@ -2,4 +2,8 @@
 base = "light"
 
 [server]
-maxUploadSize = 700
+# Lowered from 700: a single upload near that size could by itself approach
+# the ~1GB free-tier memory budget once parsed. The precise per-file
+# event_count * channel_count check in flowcyto.io.fcs is the real safety
+# net; this is just a sane blunt backstop.
+maxUploadSize = 400

@@ -79,6 +79,16 @@ def _cached_validated_search(sample_hash: str, _raw_values, _fluor_channels):
     return run_validated_search(_raw_values, _fluor_channels)
 
 
+@st.cache_data(show_spinner=False)
+def _cached_pct_negative(sample_hash: str, matrix_fp: str, _raw_values, _matrix):
+    # This full-dataset matmul previously ran uncached on every rerun of
+    # this page — including unrelated widget interactions elsewhere on the
+    # page — not just when the matrix actually changed.
+    before = (_raw_values < 0).mean(axis=0) * 100
+    after = apply_matrix_pct_negative(_raw_values, _matrix)
+    return before, after
+
+
 control_hashes = tuple(sorted(c.content_hash for c in workspace.control_samples))
 scenarios, uncontrolled, control_files = _cached_scenarios(
     sample.content_hash, control_hashes, raw_values, fluor_channels, sample, workspace.control_samples
@@ -159,8 +169,9 @@ with reset_col:
         st.rerun()
 
 current_matrix = workspace.spillover_matrix
-pct_negative_before = (raw_values < 0).mean(axis=0) * 100
-pct_negative_after = apply_matrix_pct_negative(raw_values, current_matrix)
+pct_negative_before, pct_negative_after = _cached_pct_negative(
+    sample.content_hash, matrix_fingerprint(current_matrix), raw_values, current_matrix
+)
 
 st.plotly_chart(
     build_before_after_bar(

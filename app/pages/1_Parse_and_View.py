@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from flowcyto.io.csv_source import load_csv
-from flowcyto.io.fcs import load_fcs
+from flowcyto.io.fcs import FCSTooLargeError, load_fcs
 from flowcyto.io.metadata import build_channel_metadata
 from flowcyto.io.types import LoadedSample
 from flowcyto.viz.raw import build_histogram_figure, build_scatter_figure
@@ -31,7 +31,7 @@ def _cached_load_sample(content_hash: str, filename: str, _file_or_path) -> Load
     return load_fcs(_file_or_path, filename)
 
 
-@st.cache_resource(scope="session", show_spinner="Parsing control file...")
+@st.cache_resource(scope="session", max_entries=32, show_spinner="Parsing control file...")
 def _cached_load_control(content_hash: str, filename: str, _file_or_path) -> LoadedSample:
     return load_fcs(_file_or_path, filename)
 
@@ -84,7 +84,11 @@ if sample_source is not None:
     filename = sample_source.name
     content_hash = _content_hash(sample_source)
     if workspace.sample is None or workspace.sample.content_hash != content_hash:
-        workspace.sample = _cached_load_sample(content_hash, filename, sample_source)
+        try:
+            workspace.sample = _cached_load_sample(content_hash, filename, sample_source)
+        except FCSTooLargeError as exc:
+            st.error(str(exc))
+            st.stop()
         workspace.metadata = None  # force a metadata rebuild for the new sample
         workspace.spillover_matrix = None
         workspace.default_scenario = None
@@ -103,9 +107,12 @@ if control_sources:
     for control_source in control_sources:
         control_filename = control_source.name
         control_hash = _content_hash(control_source)
-        loaded_controls.append(_cached_load_control(control_hash, control_filename, control_source))
+        try:
+            loaded_controls.append(_cached_load_control(control_hash, control_filename, control_source))
+        except FCSTooLargeError as exc:
+            st.error(str(exc))
     workspace.control_samples = loaded_controls
-    workspace.controls_available = True
+    workspace.controls_available = bool(loaded_controls)
 else:
     workspace.control_samples = []
     workspace.controls_available = False

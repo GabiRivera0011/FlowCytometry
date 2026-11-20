@@ -1,3 +1,5 @@
+import hashlib
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -7,6 +9,7 @@ from _common import ensure_src_on_path, require_sample
 ensure_src_on_path()
 
 from _gating_widgets import collect_section_gates, resolve_full_mask
+from flowcyto.compensation.diagnostics import matrix_fingerprint
 from flowcyto.transforms import arcsinh_transform
 
 st.set_page_config(page_title="Gating Summary — FlowCytometry", layout="wide")
@@ -35,12 +38,12 @@ fluor_indices = tuple(channel_index[c] for c in fluor_channels)
 
 
 @st.cache_data(show_spinner=False)
-def _full_compensated_fluor(raw_values: np.ndarray, fluor_idx: tuple, spillover_values: np.ndarray) -> np.ndarray:
-    return raw_values[:, list(fluor_idx)] @ np.linalg.inv(spillover_values)
+def _full_compensated_fluor(sample_hash: str, _raw_values: np.ndarray, fluor_idx: tuple, spillover_values: np.ndarray) -> np.ndarray:
+    return _raw_values[:, list(fluor_idx)] @ np.linalg.inv(spillover_values)
 
 
 if workspace.spillover_matrix is not None:
-    full_fluor = _full_compensated_fluor(sample.raw_values, fluor_indices, workspace.spillover_matrix.values)
+    full_fluor = _full_compensated_fluor(sample.content_hash, sample.raw_values, fluor_indices, workspace.spillover_matrix.values)
 else:
     full_fluor = None
 
@@ -56,7 +59,30 @@ def full_channel_values(channel: str) -> np.ndarray:
     return sample.raw_values[:, channel_index[channel]]
 
 
-full_mask_cache: dict = {}
+def _gating_state_fingerprint() -> str:
+    """A cheap fingerprint of every piece of session_state that
+    `resolve_full_mask` actually reads — gate shapes, incoming-population
+    refs, each section's axis labels, and picker definitions — plus the
+    sample and the compensation matrix currently in effect. Lets the full,
+    un-subsampled gate resolution below be skipped entirely (reusing last
+    run's resolved masks) whenever none of that has actually changed since
+    the last rerun, e.g. just moving this page's own slider."""
+    parts = [sample.content_hash, matrix_fingerprint(workspace.spillover_matrix) if workspace.spillover_matrix is not None else "none"]
+    for key in sorted(st.session_state.keys()):
+        if (
+            key.endswith("_shape") or key.endswith("__def")
+            or key.startswith("incoming_ref_")
+            or (key.startswith("section_") and (key.endswith("_x_label") or key.endswith("_y_label")))
+        ):
+            parts.append(f"{key}={st.session_state[key]!r}")
+    return hashlib.md5("|".join(parts).encode()).hexdigest()
+
+
+gating_fp = _gating_state_fingerprint()
+if st.session_state.get("_full_mask_fp") == gating_fp:
+    full_mask_cache: dict = st.session_state["_full_mask_cache"]
+else:
+    full_mask_cache = {}
 live_n_full = None
 if workspace.live_cells_mask_ref is not None:
     live_n_full = int(resolve_full_mask(workspace.live_cells_mask_ref, full_channel_values, n_full, full_mask_cache).sum())
@@ -103,6 +129,9 @@ for page_id in st.session_state.get("subset_pages", []):
         section = f"subset_{page_id}_{plot_id}"
         plot_title = st.session_state.get(f"subset_{section}_title", "Plot")
         add_rows("Gating — Subset Cell Population", section, f"{page_title} — {plot_title}")
+
+st.session_state["_full_mask_fp"] = gating_fp
+st.session_state["_full_mask_cache"] = full_mask_cache
 
 if not rows:
     st.info("No gates have been defined yet. Visit the gating pages, define one or more gates, then return to this page.")
